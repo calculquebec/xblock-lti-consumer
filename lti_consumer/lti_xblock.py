@@ -166,6 +166,7 @@ class LaunchTarget:
     IFRAME = LaunchTargetOption('Inline', 'iframe')
     MODAL = LaunchTargetOption('Modal', 'modal')
     NEW_WINDOW = LaunchTargetOption('New Window', 'new_window')
+    IFRAME_AND_NEW_WINDOW = LaunchTargetOption('Inline and New Window', 'iframe_and_new_window')
 
 
 @XBlock.needs('i18n')
@@ -470,6 +471,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             "Select Inline if you want the LTI content to open in an IFrame in the current page. "
             "Select Modal if you want the LTI content to open in a modal window in the current page. "
             "Select New Window if you want the LTI content to open in a new browser window. "
+            "Select Inline and New Window if you want the LTI content to open in an IFrame in the current page and give the option to open in a new window. "
             "This setting is only used when Hide External Tool is set to False."
         ),
         default=LaunchTarget.IFRAME.value,
@@ -478,6 +480,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             {"display_name": LaunchTarget.IFRAME.display_name, "value": LaunchTarget.IFRAME.value},
             {"display_name": LaunchTarget.MODAL.display_name, "value": LaunchTarget.MODAL.value},
             {"display_name": LaunchTarget.NEW_WINDOW.display_name, "value": LaunchTarget.NEW_WINDOW.value},
+            {"display_name": LaunchTarget.IFRAME_AND_NEW_WINDOW.display_name, "value": LaunchTarget.IFRAME_AND_NEW_WINDOW.value},
         ],
     )
     button_text = String(
@@ -485,7 +488,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         help=_(
             "Enter the text on the button used to launch the third party application. "
             "This setting is only used when Hide External Tool is set to False and "
-            "LTI Launch Target is set to Modal or New Window."
+            "LTI Launch Target is set to Modal, New Window or Inline and New Window."
         ),
         default="",
         scope=Scope.settings

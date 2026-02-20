@@ -23,7 +23,7 @@
 >
 
 % if (launch_url or lti_1p3_launch_url) and not hide_launch:
-    % if launch_target in ['modal', 'new_window']:
+    % if launch_target in ['modal', 'new_window', 'iframe_and_new_window']:
         <section class="wrapper-lti-link">
             % if description:
                 <div class="lti-description">${description}</div>
@@ -69,7 +69,7 @@
             </div>
         </section>
     % endif
-    % if launch_target == 'iframe':
+    % if launch_target in ['iframe', 'iframe_and_new_window']:
         <div id="lti-iframe-container" data-target="${form_url}" style="height:${inline_height}px;">
             ## The result of the LTI launch form submit will be rendered here.
             ## Don't pass in the initial_launch_url. Let the Javascript set the src, so we can get PII sharing consent
