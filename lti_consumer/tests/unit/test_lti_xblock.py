@@ -78,6 +78,64 @@ class TestLtiConsumerXBlock(TestBaseWithPatch):
         self.compat.get_user_course_forum_role.return_value = None
 
 
+class TestGetEffectiveLtiVersion(TestLtiConsumerXBlock):
+    """
+    Tests for LtiConsumerXBlock.get_effective_lti_version().
+    """
+
+    def test_returns_lti_version_when_not_external(self):
+        """
+        When config_type is not external, get_effective_lti_version()
+        returns self.lti_version unchanged.
+        """
+        self.xblock.config_type = "new"
+        self.xblock.lti_version = "lti_1p1"
+        self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p1")
+
+        self.xblock.lti_version = "lti_1p3"
+        self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p3")
+
+    def test_returns_external_version_key_when_external(self):
+        """
+        When config_type is external and external config has a "version"
+        key, that version takes priority over self.lti_version.
+        """
+        self.xblock.config_type = "external"
+        self.xblock.external_config = "test-plugin:test-id"
+        self.xblock.lti_version = "lti_1p1"
+
+        with patch("lti_consumer.filters.get_external_config_from_filter") as mock_filter:
+            mock_filter.return_value = {"version": "lti_1p3"}
+            self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p3")
+            mock_filter.assert_called_once()
+
+    def test_returns_external_lti_version_key_when_external(self):
+        """
+        When config_type is external and external config uses the
+        ``lti_version`` key (ADR 0006 format), that version takes priority.
+        """
+        self.xblock.config_type = "external"
+        self.xblock.external_config = "test-plugin:test-id"
+        self.xblock.lti_version = "lti_1p1"
+
+        with patch("lti_consumer.filters.get_external_config_from_filter") as mock_filter:
+            mock_filter.return_value = {"lti_version": "LTI_1P3"}
+            self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p3")
+
+    def test_falls_back_to_lti_version_when_no_external_version(self):
+        """
+        When external config has neither "version" nor "lti_version" key,
+        fall back to self.lti_version.
+        """
+        self.xblock.config_type = "external"
+        self.xblock.external_config = "test-plugin:test-id"
+        self.xblock.lti_version = "lti_1p1"
+
+        with patch("lti_consumer.filters.get_external_config_from_filter") as mock_filter:
+            mock_filter.return_value = {"lti_1p3_client_id": "test"}
+            self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p1")
+
+
 class TestAddXmlToNode(TestCase):
     """Unit tests for export XML on LtiConsumerXBlock."""
 

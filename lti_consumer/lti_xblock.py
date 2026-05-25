@@ -661,7 +661,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         # a new LTI ID before they've added it to advanced settings, but we do want to warn them about it.
         # If we put this check in validate_field_data(), the settings editor wouldn't let them save changes.
         course = self.course
-        if course and self.lti_version == "lti_1p1" and self.lti_id:
+        if course and self.get_effective_lti_version() == "lti_1p1" and self.lti_id:
             lti_passport_ids = [lti_passport.split(':')[0].strip() for lti_passport in course.lti_passports]
             if self.lti_id.strip() not in lti_passport_ids:
                 validation.add(ValidationMessage(ValidationMessage.WARNING, str(
@@ -1109,6 +1109,38 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
 
         return get_lti_consumer(config_id_for_block(self))
 
+    def get_effective_lti_version(self):
+        """
+        Return the effective LTI version for this block.
+
+        When ``config_type`` is ``"external"``, the version is determined
+        by the external re-usable config (via the ``version`` or
+        ``lti_version`` key), not by the block's own ``lti_version`` field.
+        Falls back to ``self.lti_version`` for non-external configs.
+        """
+        if self.config_type != "external":
+            return self.lti_version
+
+        # Runtime import since this will only run in the
+        # Open edX LMS/Studio environments.
+        # pylint: disable=import-outside-toplevel
+        from lti_consumer.filters import get_external_config_from_filter
+
+        config = get_external_config_from_filter(
+            {"course_key": self.scope_ids.usage_id.context_key},
+            self.external_config,
+        )
+        raw_version = config.get("version") or config.get("lti_version")
+        if raw_version is None:
+            return self.lti_version
+
+        # Normalize external version format (LTI_1P1 -> lti_1p1, etc.)
+        if raw_version in ("lti_1p3", "LTI_1P3"):
+            return "lti_1p3"
+        if raw_version in ("lti_1p1", "LTI_1P1"):
+            return "lti_1p1"
+        return raw_version
+
     def extract_real_user_data(self):
         """
         Extract and return real user data from the runtime
@@ -1258,7 +1290,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         If using LTI 1.3 it displays a fragment with parameters that
         need to be set on the LTI Tool to make the integration work.
         """
-        if self.lti_version == "lti_1p1":
+        if self.get_effective_lti_version() == "lti_1p1":
             return self.student_view(context)
 
         # Render template
@@ -1296,7 +1328,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
 
         # Prepend the author view for LTI1.3 when rendering student view to staff users in Studio.
         # This is needed so course staff can see the author view parameters when configuring within Libraries v2
-        if settings.SERVICE_VARIANT != 'lms' and self.lti_version == "lti_1p3" and self.user_is_staff:
+        if settings.SERVICE_VARIANT != 'lms' and self.get_effective_lti_version() == "lti_1p3" and self.user_is_staff:
             self._add_author_view(context, loader, fragment)
 
         fragment.add_content(loader.render_mako_template('/templates/html/student.html', context))
@@ -1423,7 +1455,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             Sucess: https://tools.ietf.org/html/rfc6749#section-4.4.3
             Failure: https://tools.ietf.org/html/rfc6749#section-5.2
         """
-        if self.lti_version != "lti_1p3":
+        if self.get_effective_lti_version() != "lti_1p3":
             return Response(status=404)
 
         # Asserting that the consumer can be created. This makes sure that the LtiConfiguration
@@ -1651,7 +1683,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
 
         # The lti_launch_url property only exists on the LtiConsumer1p1. The LtiConsumer1p3 does not have an
         # attribute with this name, so ensure that we're accessing it on the appropriate consumer class.
-        if consumer and self.config_type in ("database", "external") and self.lti_version == "lti_1p1":
+        if consumer and self.config_type in ("database", "external") and self.get_effective_lti_version() == "lti_1p1":
             launch_url = consumer.lti_launch_url
 
         return launch_url
@@ -1753,7 +1785,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         """
         Return the LTI block launch handler.
         """
-        if self.lti_version == 'lti_1p1':
+        if self.get_effective_lti_version() == 'lti_1p1':
             lti_block_launch_handler = self.runtime.handler_url(self, 'lti_launch_handler').rstrip('/?')
         else:
             launch_data = self.get_lti_1p3_launch_data()
@@ -1774,7 +1806,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         lti_1p3_launch_url = self.lti_1p3_launch_url.strip()
 
         # Get LTI launch URL from consumer if using database or external configuration type.
-        if consumer and self.lti_version == 'lti_1p3' and self.config_type in ('database', 'external'):
+        if consumer and self.get_effective_lti_version() == 'lti_1p3' and self.config_type in ('database', 'external'):
             lti_1p3_launch_url = consumer.launch_url
 
         return lti_1p3_launch_url
@@ -1833,7 +1865,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             'modal_horizontal_offset': self._get_modal_position_offset(self.modal_width),
             'modal_width': self.modal_width,
             'accept_grades_past_due': self.accept_grades_past_due,
-            'lti_version': self.lti_version,
+            'lti_version': self.get_effective_lti_version(),
         }
 
     def _get_modal_position_offset(self, viewport_percentage):

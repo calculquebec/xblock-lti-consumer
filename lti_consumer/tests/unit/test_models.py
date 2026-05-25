@@ -142,6 +142,98 @@ class TestLtiConfigurationModel(TestBaseWithPatch):
         self.assertEqual(self.lti_1p1_external.get_lti_consumer(), "consumer")
         mock_consumer.assert_called_once_with("https://example.com", "client_key", "secret")
 
+    @patch("lti_consumer.models.LtiConfiguration._get_lti_1p3_consumer")
+    @patch("lti_consumer.models.LtiConfiguration._get_lti_1p1_consumer")
+    @patch("lti_consumer.models.get_external_config_from_filter")
+    def test_get_lti_consumer_external_config_version_takes_priority(
+        self, mock_filter, mock_1p1, mock_1p3
+    ):
+        """
+        When config_store is external, the version from external config
+        should take priority over the stored version field.
+        """
+        # External config returns LTI 1.3, even though local version is LTI 1.1
+        mock_filter.return_value = {
+            "version": LtiConfiguration.LTI_1P3,
+            "lti_1p3_client_id": "test-client",
+        }
+        mock_1p3.return_value = "lti_1p3_consumer"
+        mock_1p1.return_value = "lti_1p1_consumer"
+
+        result = self.lti_1p1_external.get_lti_consumer()
+
+        self.assertEqual(result, "lti_1p3_consumer")
+        mock_1p3.assert_called_once()
+        mock_1p1.assert_not_called()
+
+    def test_normalize_version(self):
+        """
+        Test that _normalize_version handles all external version formats.
+        """
+        # Internal format passed through
+        self.assertEqual(
+            LtiConfiguration._normalize_version("lti_1p1"),
+            LtiConfiguration.LTI_1P1
+        )
+        self.assertEqual(
+            LtiConfiguration._normalize_version("lti_1p3"),
+            LtiConfiguration.LTI_1P3
+        )
+        # ADR 0006 format (LTI_1P1 / LTI_1P3)
+        self.assertEqual(
+            LtiConfiguration._normalize_version("LTI_1P1"),
+            LtiConfiguration.LTI_1P1
+        )
+        self.assertEqual(
+            LtiConfiguration._normalize_version("LTI_1P3"),
+            LtiConfiguration.LTI_1P3
+        )
+        # Unknown value passed through
+        self.assertEqual(
+            LtiConfiguration._normalize_version("unknown"),
+            "unknown"
+        )
+
+    @ddt.data(
+        # (stored_version, ext_config, expected_version, suffix)
+        (LtiConfiguration.LTI_1P1, {}, LtiConfiguration.LTI_1P1, 'a'),
+        (LtiConfiguration.LTI_1P3, {}, LtiConfiguration.LTI_1P3, 'b'),
+        (LtiConfiguration.LTI_1P1, {"version": "lti_1p3"}, LtiConfiguration.LTI_1P3, 'c'),
+        (LtiConfiguration.LTI_1P3, {"version": "lti_1p1"}, LtiConfiguration.LTI_1P1, 'd'),
+        (LtiConfiguration.LTI_1P1, {"lti_version": "LTI_1P3"}, LtiConfiguration.LTI_1P3, 'e'),
+        (LtiConfiguration.LTI_1P3, {"lti_version": "LTI_1P1"}, LtiConfiguration.LTI_1P1, 'f'),
+    )
+    @ddt.unpack
+    @patch("lti_consumer.models.get_external_config_from_filter")
+    def test_get_effective_version(
+        self, stored_version, ext_config, expected_version, suffix, mock_filter
+    ):
+        """
+        Test get_effective_version returns correct version for
+        various external config scenarios.
+        """
+        mock_filter.return_value = ext_config
+        config = LtiConfiguration.objects.create(
+            version=stored_version,
+            config_store=LtiConfiguration.CONFIG_EXTERNAL,
+            external_id="test:x",
+            # Use unique dummy location to avoid UNIQUE constraint collisions
+            location=f'block-v1:course+test+2020+type@problem+block@effver-{suffix}',
+        )
+        self.assertEqual(config.get_effective_version(), expected_version)
+
+    def test_get_effective_version_non_external(self):
+        """
+        Test get_effective_version returns stored version when
+        config_store is not external.
+        """
+        config = LtiConfiguration.objects.create(
+            version=LtiConfiguration.LTI_1P1,
+            config_store=LtiConfiguration.CONFIG_ON_XBLOCK,
+            location='block-v1:course+test+2020+type@problem+block@effver-non-ext',
+        )
+        self.assertEqual(config.get_effective_version(), LtiConfiguration.LTI_1P1)
+
     def test_repr(self):
         """
         Test String representation of model.

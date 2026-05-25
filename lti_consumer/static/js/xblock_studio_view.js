@@ -69,9 +69,13 @@ function LtiConsumerXBlockInitStudio(runtime, element, data) {
     if (configType === "new") {
       toggleFieldVisibility("lti_id", version === "lti_1p1");
       toggleFieldVisibility("external_config", false);
+      toggleFieldVisibility("lti_version", true);
     } else {
       toggleFieldVisibility("lti_id", false);
       toggleFieldVisibility("external_config", true);
+      // Hide LTI version when using reusable/external config;
+      // version is determined by the external config, not the block.
+      toggleFieldVisibility("lti_version", false);
     }
 
     if (configType === "external") {
