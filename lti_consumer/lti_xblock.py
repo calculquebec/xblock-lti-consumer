@@ -1114,9 +1114,9 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         Return the effective LTI version for this block.
 
         When ``config_type`` is ``"external"``, the version is determined
-        by the external re-usable config (via the ``version`` or
-        ``lti_version`` key), not by the block's own ``lti_version`` field.
-        Falls back to ``self.lti_version`` for non-external configs.
+        by the external re-usable config's ``version`` key, not by the
+        block's own ``lti_version`` field.  Falls back to ``self.lti_version``
+        for non-external configs or when external config has no version.
         """
         if self.config_type != "external":
             return self.lti_version
@@ -1130,16 +1130,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             {"course_key": self.scope_ids.usage_id.context_key},
             self.external_config,
         )
-        raw_version = config.get("version") or config.get("lti_version")
-        if raw_version is None:
-            return self.lti_version
-
-        # Normalize external version format (LTI_1P1 -> lti_1p1, etc.)
-        if raw_version in ("lti_1p3", "LTI_1P3"):
-            return "lti_1p3"
-        if raw_version in ("lti_1p1", "LTI_1P1"):
-            return "lti_1p1"
-        return raw_version
+        return config.get("version") or self.lti_version
 
     def extract_real_user_data(self):
         """

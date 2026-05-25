@@ -166,42 +166,12 @@ class TestLtiConfigurationModel(TestBaseWithPatch):
         mock_1p3.assert_called_once()
         mock_1p1.assert_not_called()
 
-    def test_normalize_version(self):
-        """
-        Test that _normalize_version handles all external version formats.
-        """
-        # Internal format passed through
-        self.assertEqual(
-            LtiConfiguration._normalize_version("lti_1p1"),
-            LtiConfiguration.LTI_1P1
-        )
-        self.assertEqual(
-            LtiConfiguration._normalize_version("lti_1p3"),
-            LtiConfiguration.LTI_1P3
-        )
-        # ADR 0006 format (LTI_1P1 / LTI_1P3)
-        self.assertEqual(
-            LtiConfiguration._normalize_version("LTI_1P1"),
-            LtiConfiguration.LTI_1P1
-        )
-        self.assertEqual(
-            LtiConfiguration._normalize_version("LTI_1P3"),
-            LtiConfiguration.LTI_1P3
-        )
-        # Unknown value passed through
-        self.assertEqual(
-            LtiConfiguration._normalize_version("unknown"),
-            "unknown"
-        )
-
     @ddt.data(
         # (stored_version, ext_config, expected_version, suffix)
         (LtiConfiguration.LTI_1P1, {}, LtiConfiguration.LTI_1P1, 'a'),
         (LtiConfiguration.LTI_1P3, {}, LtiConfiguration.LTI_1P3, 'b'),
         (LtiConfiguration.LTI_1P1, {"version": "lti_1p3"}, LtiConfiguration.LTI_1P3, 'c'),
         (LtiConfiguration.LTI_1P3, {"version": "lti_1p1"}, LtiConfiguration.LTI_1P1, 'd'),
-        (LtiConfiguration.LTI_1P1, {"lti_version": "LTI_1P3"}, LtiConfiguration.LTI_1P3, 'e'),
-        (LtiConfiguration.LTI_1P3, {"lti_version": "LTI_1P1"}, LtiConfiguration.LTI_1P1, 'f'),
     )
     @ddt.unpack
     @patch("lti_consumer.models.get_external_config_from_filter")

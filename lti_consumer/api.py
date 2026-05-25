@@ -147,12 +147,8 @@ def _get_lti_config_for_block(block):
             {"course_key": block.scope_ids.usage_id.context_key},
             block.external_config
         )
-        # External config may use ``version`` or ``lti_version``
-        # (ADR 0006 uses ``lti_version``).  Normalize the value so
-        # LtiConfiguration.version always stores internal format.
-        raw_version = config.get("version") or config.get("lti_version")
         lti_config = _get_or_create_local_lti_config(
-            LtiConfiguration._normalize_version(raw_version) if raw_version else None,
+            config.get("version"),
             block,
             LtiConfiguration.CONFIG_EXTERNAL,
         )

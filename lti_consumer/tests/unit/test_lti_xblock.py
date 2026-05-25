@@ -109,23 +109,10 @@ class TestGetEffectiveLtiVersion(TestLtiConsumerXBlock):
             self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p3")
             mock_filter.assert_called_once()
 
-    def test_returns_external_lti_version_key_when_external(self):
-        """
-        When config_type is external and external config uses the
-        ``lti_version`` key (ADR 0006 format), that version takes priority.
-        """
-        self.xblock.config_type = "external"
-        self.xblock.external_config = "test-plugin:test-id"
-        self.xblock.lti_version = "lti_1p1"
-
-        with patch("lti_consumer.filters.get_external_config_from_filter") as mock_filter:
-            mock_filter.return_value = {"lti_version": "LTI_1P3"}
-            self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p3")
-
     def test_falls_back_to_lti_version_when_no_external_version(self):
         """
-        When external config has neither "version" nor "lti_version" key,
-        fall back to self.lti_version.
+        When external config has no "version" key, fall back to
+        self.lti_version.
         """
         self.xblock.config_type = "external"
         self.xblock.external_config = "test-plugin:test-id"
