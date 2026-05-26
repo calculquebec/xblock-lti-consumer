@@ -1113,9 +1113,9 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         """
         Return the effective LTI version for this block.
 
-        When ``config_type`` is ``"external"``, the version is determined
-        by the external re-usable config's ``version`` key, not by the
-        block's own ``lti_version`` field.  Falls back to ``self.lti_version``
+        When `config_type` is `"external"`, the version is determined
+        by the external re-usable config's `version` key, not by the
+        block's own `lti_version` field.  Falls back to `self.lti_version`
         for non-external configs or when external config has no version.
         """
         if self.config_type != "external":
