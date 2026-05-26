@@ -1215,6 +1215,11 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             if field_info is not None:
                 context["fields"][field_name] = field_info
 
+        # Override lti_version display value for external config
+        # so Studio shows the effective version from the external config.
+        if self.config_type == 'external' and 'lti_version' in context['fields']:
+            context['fields']['lti_version']['value'] = self.get_effective_lti_version()
+
         i18n_service = self.runtime.service(self, 'i18n')
 
         # ResourceLoader renders template from string, not Django loader-backed template.

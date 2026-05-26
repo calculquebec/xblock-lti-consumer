@@ -2147,6 +2147,51 @@ class TestLtiConsumer1p3XBlock(TestCase):
             normalized_content,
         )
 
+    @patch('lti_consumer.plugin.compat.get_course_by_id')
+    def test_studio_view_external_config_shows_effective_version(self, mock_get_course_by_id):
+        """
+        Test that studio_view displays the effective LTI version from
+        the external config, not the raw block lti_version field.
+        """
+        # Mock runtime services used by studio view
+        mock_i18n_service = gettext.NullTranslations()
+        mock_i18n_service.ugettext = mock_i18n_service.gettext
+
+        def runtime_service_side_effect(_block, service_name):
+            if service_name == 'i18n':
+                return mock_i18n_service
+            return None
+
+        self.xblock.runtime.service.side_effect = runtime_service_side_effect
+
+        mock_course = Mock()
+        mock_course.display_name_with_default = "DemoX"
+        mock_course.display_org_with_default = "edX"
+        mock_course.lti_passports = ["lti_passport_name:key:secret"]
+        mock_get_course_by_id.return_value = mock_course
+
+        # Configure block for external config with stale raw lti_version
+        self.xblock.config_type = 'external'
+        self.xblock.external_config = 'test-plugin:test-id'
+        self.xblock.lti_version = 'lti_1p1'
+
+        with patch('lti_consumer.filters.get_external_config_from_filter') as mock_filter:
+            mock_filter.return_value = {'version': 'lti_1p3'}
+
+            fragment = self.xblock.studio_view({})
+            normalized_content = ' '.join(fragment.content.split())
+
+            # The lti_1p3 radio should be checked (sourced from external config)
+            self.assertIn(
+                'id="lti_version_option-lti_1p3" value="lti_1p3" checked',
+                normalized_content,
+            )
+            # The lti_1p1 radio should NOT be checked (stale block value overridden)
+            self.assertNotIn(
+                'id="lti_version_option-lti_1p1" checked',
+                normalized_content,
+            )
+
     @patch('lti_consumer.lti_xblock.LtiConsumerXBlock.get_lti_1p3_launch_data')
     @patch('lti_consumer.api.get_lti_1p3_launch_info')
     def test_author_view(self, mock_get_launch_info, mock_lti_get_1p3_launch_data):
