@@ -39,10 +39,29 @@ function LtiConsumerXBlockInitStudio(runtime, element, data) {
   }
 
   /**
+   * Return effective LTI version.
+   * When config_type is external, version is determined by the external
+   * re-usable config, not by the block's own lti_version field.
+   * Falls back to the radio button value otherwise.
+   */
+  function getEffectiveVersion() {
+    let configType;
+    try {
+      configType = getFieldValue("config_type").value || "new";
+    } catch (e) {
+      configType = "new";
+    }
+    if (configType === "external") {
+      return data.effectiveLtiVersion;
+    }
+    return getRadioButtonValue("lti_version");
+  }
+
+  /**
    * Show or hide components depending on the selected lti_version and config_type.
    */
   function toggleLtiComponents() {
-    const version = getRadioButtonValue("lti_version");
+    const version = getEffectiveVersion();
     let configType;
     try {
       configType = getFieldValue("config_type").value || "new";
@@ -338,7 +357,7 @@ function LtiConsumerXBlockInitStudio(runtime, element, data) {
     .bind("click", function (e) {
       e.preventDefault();
       let nextStep;
-      const version = getRadioButtonValue("lti_version");
+      const version = getEffectiveVersion();
       let configType;
       try {
         configType = getFieldValue("config_type").value || "new";
@@ -366,7 +385,7 @@ function LtiConsumerXBlockInitStudio(runtime, element, data) {
     .bind("click", function (e) {
       e.preventDefault();
       let previousStep;
-      const version = getRadioButtonValue("lti_version");
+      const version = getEffectiveVersion();
       let configType;
       try {
         configType = getFieldValue("config_type").value || "new";

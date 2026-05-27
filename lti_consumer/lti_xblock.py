@@ -1268,6 +1268,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
                 self.scope_ids.usage_id.course_key
             ),
             "editableFields": self.editable_fields,
+            "effectiveLtiVersion": self.get_effective_lti_version(),
         }
 
         statici18n_js_url = self._get_statici18n_js_url()

@@ -2192,6 +2192,16 @@ class TestLtiConsumer1p3XBlock(TestCase):
                 normalized_content,
             )
 
+            # Verify js_context includes effectiveLtiVersion for JS use
+            self.assertIn(
+                'effectiveLtiVersion',
+                fragment.json_init_args,
+            )
+            self.assertEqual(
+                fragment.json_init_args['effectiveLtiVersion'],
+                'lti_1p3',
+            )
+
     @patch('lti_consumer.lti_xblock.LtiConsumerXBlock.get_lti_1p3_launch_data')
     @patch('lti_consumer.api.get_lti_1p3_launch_info')
     def test_author_view(self, mock_get_launch_info, mock_lti_get_1p3_launch_data):
