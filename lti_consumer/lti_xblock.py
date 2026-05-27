@@ -1118,14 +1118,28 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         by the external re-usable config's `version` key, not by the
         block's own `lti_version` field.  Falls back to `self.lti_version`
         for non-external configs or when external config has no version.
+
+        If the external config lookup raises (e.g. filter service
+        unavailable), the exception is logged and the block's own
+        `lti_version` is returned as a safe fallback.
         """
         if self.config_type != "external":
             return self.lti_version
 
-        config = get_external_config_from_filter(
-            {"course_key": self.scope_ids.usage_id.context_key},
-            self.external_config,
-        )
+        try:
+            config = get_external_config_from_filter(
+                {"course_key": self.scope_ids.usage_id.context_key},
+                self.external_config,
+            )
+        except Exception:  # pylint: disable=broad-except
+            log.exception(
+                "Failed to resolve external config version for config_id=%s; "
+                "falling back to block-level lti_version=%s",
+                self.external_config,
+                self.lti_version,
+            )
+            return self.lti_version
+
         return config.get("version") or self.lti_version
 
     @XBlock.json_handler
@@ -1134,15 +1148,27 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         Handler for Studio to resolve the LTI version for a given
         external config ID.  Returns only the version — no secrets
         from the external configuration are exposed.
+
+        If the filter lookup raises (e.g. service unavailable), the
+        exception is logged and a safe fallback response is returned
+        so the Studio UI degrades gracefully.
         """
         config_id = data.get('config_id', '')
         if not config_id:
             return {'found': False, 'version': None}
 
-        config = get_external_config_from_filter(
-            {"course_key": self.scope_ids.usage_id.context_key},
-            config_id,
-        )
+        try:
+            config = get_external_config_from_filter(
+                {"course_key": self.scope_ids.usage_id.context_key},
+                config_id,
+            )
+        except Exception:  # pylint: disable=broad-except
+            log.exception(
+                "Failed to resolve external config version for config_id=%s",
+                config_id,
+            )
+            return {'found': False, 'version': None}
+
         version = config.get("version") if config else None
         return {'found': version is not None, 'version': version}
 

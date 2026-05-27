@@ -562,7 +562,16 @@ function LtiConsumerXBlockInitStudio(runtime, element, data) {
       const { editableFields } = data;
       const handlerUrl = runtime.handlerUrl(element, "submit_studio_edits");
       const submitData = { values: {}, defaults: [] };
+
+      // When config_type is external, lti_version is determined by the
+      // reusable config — skip submitting it to avoid overwriting the
+      // effective version with a stale radio-button value.
+      const saveConfigType = getFieldValue("config_type").value || "new";
+
       for (const field of editableFields) {
+        if (saveConfigType === "external" && field === "lti_version") {
+          continue;
+        }
         const { isSet, value } = getFieldValue(field);
         if (isSet) {
           submitData.values[field] = value;

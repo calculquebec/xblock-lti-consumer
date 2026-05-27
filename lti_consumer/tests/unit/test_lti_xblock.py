@@ -122,6 +122,20 @@ class TestGetEffectiveLtiVersion(TestLtiConsumerXBlock):
             mock_filter.return_value = {"lti_1p3_client_id": "test"}
             self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p1")
 
+    def test_falls_back_on_filter_exception(self):
+        """
+        When get_external_config_from_filter raises, fall back to
+        self.lti_version instead of propagating the exception.
+        """
+        self.xblock.config_type = "external"
+        self.xblock.external_config = "test-plugin:test-id"
+        self.xblock.lti_version = "lti_1p1"
+
+        with patch("lti_consumer.lti_xblock.get_external_config_from_filter") as mock_filter:
+            mock_filter.side_effect = Exception("Filter service unavailable")
+            version = self.xblock.get_effective_lti_version()
+            self.assertEqual(version, "lti_1p1")
+
 
 class TestResolveExternalConfigVersion(TestLtiConsumerXBlock):
     """
@@ -170,6 +184,17 @@ class TestResolveExternalConfigVersion(TestLtiConsumerXBlock):
             result = self._call_handler(None)
             self.assertEqual(result, {'found': False, 'version': None})
             mock_filter.assert_not_called()
+
+    def test_graceful_on_filter_exception(self):
+        """
+        When get_external_config_from_filter raises, handler returns
+        {'found': False, 'version': None} instead of 500.
+        """
+        with patch('lti_consumer.lti_xblock.get_external_config_from_filter') as mock_filter:
+            mock_filter.side_effect = Exception("Filter service unavailable")
+            result = self._call_handler('test-plugin:test-id')
+            self.assertEqual(result, {'found': False, 'version': None})
+            mock_filter.assert_called_once()
 
 
 class TestAddXmlToNode(TestCase):
@@ -2309,6 +2334,50 @@ class TestLtiConsumer1p3XBlock(TestCase):
                 fragment.json_init_args,
             )
 
+    @patch('lti_consumer.plugin.compat.get_course_by_id')
+    def test_studio_view_graceful_on_filter_error(self, mock_get_course_by_id):
+        """
+        studio_view must not crash when get_external_config_from_filter
+        raises; it should degrade gracefully by showing the block's
+        raw lti_version.
+        """
+        mock_i18n_service = gettext.NullTranslations()
+        mock_i18n_service.ugettext = mock_i18n_service.gettext
+
+        def runtime_service_side_effect(_block, service_name):
+            if service_name == 'i18n':
+                return mock_i18n_service
+            return None
+
+        self.xblock.runtime.service.side_effect = runtime_service_side_effect
+
+        mock_course = Mock()
+        mock_course.display_name_with_default = "DemoX"
+        mock_course.display_org_with_default = "edX"
+        mock_course.lti_passports = ["lti_passport_name:key:secret"]
+        mock_get_course_by_id.return_value = mock_course
+
+        self.xblock.config_type = 'external'
+        self.xblock.external_config = 'test-plugin:test-id'
+        self.xblock.lti_version = 'lti_1p1'
+
+        with patch('lti_consumer.lti_xblock.get_external_config_from_filter') as mock_filter:
+            mock_filter.side_effect = Exception("Filter service unavailable")
+            # Must not raise.
+            fragment = self.xblock.studio_view({})
+
+        # Even with a filter failure, the fragment should render
+        # its JS init args without crashing.
+        self.assertEqual(fragment.js_init_fn, 'LtiConsumerXBlockInitStudio')
+        self.assertIn(
+            'rawLtiVersion',
+            fragment.json_init_args,
+        )
+        self.assertEqual(
+            fragment.json_init_args['rawLtiVersion'],
+            'lti_1p1',
+        )
+
     @patch('lti_consumer.lti_xblock.LtiConsumerXBlock.get_lti_1p3_launch_data')
     @patch('lti_consumer.api.get_lti_1p3_launch_info')
     def test_author_view(self, mock_get_launch_info, mock_lti_get_1p3_launch_data):
@@ -2718,6 +2787,66 @@ class TestSubmitStudioEditsHandler(TestLtiConsumerXBlock):
         )
         external_config_flag_patcher.start()
         self.addCleanup(external_config_flag_patcher.stop)
+
+    def _call_submit_studio_edits(self, payload):
+        """Helper: call submit_studio_edits handler with JSON request."""
+        import json
+        request = make_request(json.dumps(payload), 'POST')
+        response = self.xblock.submit_studio_edits(request)
+        return json.loads(response.body)
+
+    def test_external_config_skips_lti_version(self):
+        """
+        When config_type is external, submitting studio edits WITHOUT
+        lti_version in the payload must NOT overwrite the block's
+        stored lti_version.
+
+        The JS in xblock_studio_view.js now skips lti_version from
+        the payload when config_type === 'external' (the version is
+        determined by the reusable config). This test validates the
+        Python handler's contract: it only sets fields present in
+        data['values'].
+        """
+        self.xblock.config_type = 'external'
+        self.xblock.external_config = 'test-plugin:test-id'
+        self.xblock.lti_version = 'lti_1p3'
+
+        # Simulate fixed-JS payload: config_type set, lti_version omitted.
+        payload = {
+            'values': {'config_type': 'external'},
+            'defaults': [],
+        }
+        with patch('lti_consumer.lti_xblock.external_config_filter_enabled', return_value=True):
+            result = self._call_submit_studio_edits(payload)
+
+        self.assertEqual(result, {'result': 'success'})
+        # lti_version must remain unchanged.
+        self.assertEqual(self.xblock.lti_version, 'lti_1p3')
+
+    def test_external_config_lti_version_not_overwritten_when_omitted(self):
+        """
+        When studio edits include config_type='external' and also
+        include other fields (like display_name) but NOT lti_version,
+        the block's stored lti_version must survive unchanged.
+        """
+        self.xblock.config_type = 'external'
+        self.xblock.external_config = 'test-plugin:test-id'
+        self.xblock.lti_version = 'lti_1p1'
+        self.xblock.display_name = 'Original Name'
+
+        payload = {
+            'values': {
+                'config_type': 'external',
+                'display_name': 'Updated Name',
+            },
+            'defaults': [],
+        }
+        with patch('lti_consumer.lti_xblock.external_config_filter_enabled', return_value=True):
+            result = self._call_submit_studio_edits(payload)
+
+        self.assertEqual(result, {'result': 'success'})
+        self.assertEqual(self.xblock.lti_version, 'lti_1p1')
+        self.assertEqual(self.xblock.display_name, 'Updated Name')
 
 
 @ddt.ddt
