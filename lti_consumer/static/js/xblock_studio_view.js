@@ -20,6 +20,10 @@ function LtiConsumerXBlockInitStudio(runtime, element, data) {
       callback(_versionCache[configId]);
       return;
     }
+    // Global counter bumps on each async version lookup.
+    // Local requestId captures the incremented value via pre-increment.
+    // Later stale-response checks compare local vs global to ignore
+    // responses from superseded requests (see comments below).
     var requestId = ++_versionRequestId;
     var handlerUrl = runtime.handlerUrl(element, "resolve_external_config_version");
 
