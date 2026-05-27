@@ -132,11 +132,10 @@ class TestResolveExternalConfigVersion(TestLtiConsumerXBlock):
 
     def _call_handler(self, config_id):
         """Helper: build a JSON POST request, call handler, parse JSON body."""
-        import json
         body = json.dumps({'config_id': config_id}) if config_id is not None else '{}'
         request = make_request(body, 'POST')
         response = self.xblock.resolve_external_config_version(request)
-        return json.loads(response.body)
+        return json.loads(response.body)  # pylint: disable=no-member
 
     def test_returns_version_for_known_config(self):
         """Returns version when config ID exists and has a version key."""
@@ -2687,9 +2686,6 @@ class TestLti1p3AccessTokenJWK(TestBaseWithPatch):
         response = self.xblock.lti_1p3_access_token(self.request)
         self.assertEqual(response.status_code, 400)
         self.assertJSONEqual(response.content, {'error': 'invalid_client'})
-
-
-
 
 
 @ddt.ddt

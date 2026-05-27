@@ -1143,7 +1143,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         return config.get("version") or self.lti_version
 
     @XBlock.json_handler
-    def resolve_external_config_version(self, data, suffix=''):
+    def resolve_external_config_version(self, data, suffix=''):  # pylint: disable=unused-argument
         """
         Handler for Studio to resolve the LTI version for a given
         external config ID.  Returns only the version — no secrets
