@@ -80,7 +80,7 @@ class TestLtiConsumerXBlock(TestBaseWithPatch):
 
 class TestGetEffectiveLtiVersion(TestLtiConsumerXBlock):
     """
-    Tests for LtiConsumerXBlock.get_effective_lti_version().
+    Tests for LtiConsumerXBlock.get_resolved_lti_version().
     """
 
     def test_returns_external_version_key_when_external(self):
@@ -94,7 +94,7 @@ class TestGetEffectiveLtiVersion(TestLtiConsumerXBlock):
 
         with patch("lti_consumer.lti_xblock.get_external_config_from_filter") as mock_filter:
             mock_filter.return_value = {"version": "lti_1p3"}
-            self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p3")
+            self.assertEqual(self.xblock.get_resolved_lti_version(), "lti_1p3")
             mock_filter.assert_called_once()
 
     def test_falls_back_to_lti_version_when_no_external_version(self):
@@ -108,7 +108,7 @@ class TestGetEffectiveLtiVersion(TestLtiConsumerXBlock):
 
         with patch("lti_consumer.lti_xblock.get_external_config_from_filter") as mock_filter:
             mock_filter.return_value = {"lti_1p3_client_id": "test"}
-            self.assertEqual(self.xblock.get_effective_lti_version(), "lti_1p1")
+            self.assertEqual(self.xblock.get_resolved_lti_version(), "lti_1p1")
 
     def test_falls_back_on_filter_exception(self):
         """
@@ -121,7 +121,7 @@ class TestGetEffectiveLtiVersion(TestLtiConsumerXBlock):
 
         with patch("lti_consumer.lti_xblock.get_external_config_from_filter") as mock_filter:
             mock_filter.side_effect = Exception("Filter service unavailable")
-            version = self.xblock.get_effective_lti_version()
+            version = self.xblock.get_resolved_lti_version()
             self.assertEqual(version, "lti_1p1")
 
 
