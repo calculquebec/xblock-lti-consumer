@@ -3,27 +3,31 @@ Unit tests for LTI models.
 """
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch, call
+from unittest.mock import call, patch
 
 import ddt
+from ccx_keys.locator import CCXBlockUsageLocator
 from Cryptodome.PublicKey import RSA
 from django.core.exceptions import ValidationError
-from django.test.testcases import TestCase
 from edx_django_utils.cache import RequestCache
-from ccx_keys.locator import CCXBlockUsageLocator
 from opaque_keys.edx.locator import CourseLocator
 
 from lti_consumer.lti_xblock import LtiConsumerXBlock
-from lti_consumer.models import (CourseAllowPIISharingInLTIFlag, LtiAgsLineItem, LtiAgsScore, LtiConfiguration,
-                                 LtiDlContentItem)
-from lti_consumer.tests.test_utils import make_xblock
+from lti_consumer.models import (
+    CourseAllowPIISharingInLTIFlag,
+    LtiAgsLineItem,
+    LtiAgsScore,
+    LtiConfiguration,
+    LtiDlContentItem,
+)
+from lti_consumer.tests.test_utils import TestBaseWithPatch, make_xblock
 
 LAUNCH_URL = 'http://tool.example/launch'
 DEEP_LINK_URL = 'http://tool.example/deep-link/launch'
 
 
 @ddt.ddt
-class TestLtiConfigurationModel(TestCase):
+class TestLtiConfigurationModel(TestBaseWithPatch):
     """
     Unit tests for LtiConfiguration model methods.
     """
@@ -46,6 +50,9 @@ class TestLtiConfigurationModel(TestCase):
             'lti_advantage_deep_linking_enabled': True,
         }
         self.xblock = make_xblock('lti_consumer', LtiConsumerXBlock, self.xblock_attributes)
+        self.xblock_1 = make_xblock('lti_consumer', LtiConsumerXBlock, self.xblock_attributes)
+        self.xblock_2 = make_xblock('lti_consumer', LtiConsumerXBlock, self.xblock_attributes)
+        self.xblock_3 = make_xblock('lti_consumer', LtiConsumerXBlock, self.xblock_attributes)
 
         patcher = patch(
             'lti_consumer.plugin.compat.load_enough_xblock',
@@ -61,12 +68,12 @@ class TestLtiConfigurationModel(TestCase):
         )
 
         self.lti_1p3_config = LtiConfiguration.objects.create(
-            location=self.xblock.scope_ids.usage_id,
+            location=self.xblock_1.scope_ids.usage_id,
             version=LtiConfiguration.LTI_1P3
         )
 
         self.lti_1p3_config_db = LtiConfiguration.objects.create(
-            location=self.xblock.scope_ids.usage_id,
+            location=self.xblock_2.scope_ids.usage_id,
             version=LtiConfiguration.LTI_1P3,
             config_store=LtiConfiguration.CONFIG_ON_DB,
             lti_advantage_ags_mode='programmatic',
@@ -76,7 +83,7 @@ class TestLtiConfigurationModel(TestCase):
         self.lti_1p3_config_external = LtiConfiguration.objects.create(
             version=LtiConfiguration.LTI_1P3,
             config_store=LtiConfiguration.CONFIG_EXTERNAL,
-            location=self.xblock.scope_ids.usage_id,
+            location=self.xblock_3.scope_ids.usage_id,
         )
 
         self.lti_1p1_external = LtiConfiguration.objects.create(
@@ -89,11 +96,13 @@ class TestLtiConfigurationModel(TestCase):
         """
         Helper function to create a LtiConfiguration object with specific attributes
         """
-        return LtiConfiguration.objects.create(
-            location=self.xblock.scope_ids.usage_id,
-            version=LtiConfiguration.LTI_1P3,
-            **kwargs
+        defaults = kwargs
+        defaults["version"] = LtiConfiguration.LTI_1P3
+        config, _ = LtiConfiguration.objects.update_or_create(
+            location=self.xblock_1.scope_ids.usage_id,
+            defaults=defaults,
         )
+        return config
 
     @patch("lti_consumer.models.LtiConfiguration._get_lti_1p3_consumer")
     @patch("lti_consumer.models.LtiConfiguration._get_lti_1p1_consumer")
@@ -132,6 +141,58 @@ class TestLtiConfigurationModel(TestCase):
 
         self.assertEqual(self.lti_1p1_external.get_lti_consumer(), "consumer")
         mock_consumer.assert_called_once_with("https://example.com", "client_key", "secret")
+
+    @patch("lti_consumer.models.LtiConfiguration._get_lti_1p3_consumer")
+    @patch("lti_consumer.models.LtiConfiguration._get_lti_1p1_consumer")
+    @patch("lti_consumer.models.get_external_config_from_filter")
+    def test_get_lti_consumer_external_config_version_takes_priority(
+        self, mock_filter, mock_1p1, mock_1p3
+    ):
+        """
+        When config_store is external, the version from external config
+        should take priority over the stored version field.
+        """
+        # External config returns LTI 1.3, even though local version is LTI 1.1
+        mock_filter.return_value = {
+            "version": LtiConfiguration.LTI_1P3,
+            "lti_1p3_client_id": "test-client",
+        }
+        mock_1p3.return_value = "lti_1p3_consumer"
+        mock_1p1.return_value = "lti_1p1_consumer"
+
+        result = self.lti_1p1_external.get_lti_consumer()
+
+        self.assertEqual(result, "lti_1p3_consumer")
+        mock_1p3.assert_called_once()
+        mock_1p1.assert_not_called()
+
+    @patch("lti_consumer.models.get_external_config_from_filter")
+    def test_get_effective_version_falls_back_on_external_without_version(
+        self, mock_filter
+    ):
+        """
+        External config without a "version" key falls back to the
+        stored version field.
+        """
+        mock_filter.return_value = {"lti_1p3_client_id": "test"}
+        config = LtiConfiguration.objects.create(
+            version=LtiConfiguration.LTI_1P1,
+            config_store=LtiConfiguration.CONFIG_EXTERNAL,
+            external_id="test:x",
+            location='block-v1:course+test+2020+type@problem+block@effver-fallback',
+        )
+        self.assertEqual(config.get_effective_version(), LtiConfiguration.LTI_1P1)
+
+    def test_get_effective_version_non_external(self):
+        """
+        Non-external config_store returns the stored version directly.
+        """
+        config = LtiConfiguration.objects.create(
+            version=LtiConfiguration.LTI_1P3,
+            config_store=LtiConfiguration.CONFIG_ON_XBLOCK,
+            location='block-v1:course+test+2020+type@problem+block@effver-non-ext',
+        )
+        self.assertEqual(config.get_effective_version(), LtiConfiguration.LTI_1P3)
 
     def test_repr(self):
         """
@@ -333,17 +394,17 @@ class TestLtiConfigurationModel(TestCase):
         )
 
         # Check that model fields are empty
-        self.assertFalse(lti_config.lti_1p3_internal_private_key)
-        self.assertFalse(lti_config.lti_1p3_internal_private_key_id)
-        self.assertFalse(lti_config.lti_1p3_internal_public_jwk)
+        self.assertFalse(lti_config.lti_1p3_passport.lti_1p3_internal_private_key)
+        self.assertFalse(lti_config.lti_1p3_passport.lti_1p3_internal_private_key_id)
+        self.assertFalse(lti_config.lti_1p3_passport.lti_1p3_internal_public_jwk)
 
         # Create and retrieve public keys
         _ = lti_config.lti_1p3_public_jwk
 
         # Check if keys were created
-        self.assertTrue(lti_config.lti_1p3_internal_private_key)
-        self.assertTrue(lti_config.lti_1p3_internal_private_key_id)
-        self.assertTrue(lti_config.lti_1p3_internal_public_jwk)
+        self.assertTrue(lti_config.lti_1p3_passport.lti_1p3_internal_private_key)
+        self.assertTrue(lti_config.lti_1p3_passport.lti_1p3_internal_private_key_id)
+        self.assertTrue(lti_config.lti_1p3_passport.lti_1p3_internal_public_jwk)
 
     def test_generate_public_key_only(self):
         """
@@ -356,8 +417,8 @@ class TestLtiConfigurationModel(TestCase):
         )
         # Create and retrieve public keys
         public_key = lti_config.lti_1p3_public_jwk.copy()
-        lti_config.lti_1p3_internal_public_jwk = ""
-        lti_config.save()
+        lti_config.lti_1p3_passport.lti_1p3_internal_public_jwk = ""
+        lti_config.lti_1p3_passport.save()
 
         # Retrieve public key and check that it was correctly regenerated
         regenerated_public_key = lti_config.lti_1p3_public_jwk
@@ -384,11 +445,11 @@ class TestLtiConfigurationModel(TestCase):
 
         self.lti_1p3_config.config_store = self.lti_1p3_config.CONFIG_ON_DB
 
-        self.lti_1p3_config_db.lti_1p3_tool_keyset_url = ''
-        self.lti_1p3_config_db.lti_1p3_tool_public_key = ''
+        self.lti_1p3_config_db.lti_1p3_passport.lti_1p3_tool_keyset_url = ''
+        self.lti_1p3_config_db.lti_1p3_passport.lti_1p3_tool_public_key = ''
 
         with self.assertRaises(ValidationError):
-            self.lti_1p3_config_db.clean()
+            self.lti_1p3_config_db.lti_1p3_passport.clean()
 
         self.lti_1p3_config.lti_1p3_proctoring_enabled = True
         self.lti_1p3_config.external_id = 'test_id'
@@ -558,7 +619,7 @@ class TestLtiConfigurationModel(TestCase):
         self.assertEqual(consumer.launch_url, self.xblock.lti_1p3_launch_url)
 
 
-class TestLtiAgsLineItemModel(TestCase):
+class TestLtiAgsLineItemModel(TestBaseWithPatch):
     """
     Unit tests for LtiAgsLineItem model methods.
     """
@@ -583,7 +644,7 @@ class TestLtiAgsLineItemModel(TestCase):
         )
 
 
-class TestLtiAgsScoreModel(TestCase):
+class TestLtiAgsScoreModel(TestBaseWithPatch):
     """
     Unit tests for LtiAgsScore model methods.
     """
@@ -648,7 +709,7 @@ class TestLtiAgsScoreModel(TestCase):
         )
 
 
-class TestLtiDlContentItemModel(TestCase):
+class TestLtiDlContentItemModel(TestBaseWithPatch):
     """
     Unit tests for LtiDlContentItem model methods.
     """
@@ -695,7 +756,7 @@ def lti_consumer_fields_editing_flag(course_id, enabled_for_course=False):
 
 
 @ddt.ddt
-class TestLTIConsumerHideFieldsFlag(TestCase):
+class TestLTIConsumerHideFieldsFlag(TestBaseWithPatch):
     """
     Tests the behavior of the flags for lti consumer fields' editing feature.
     These are set via Django admin settings.

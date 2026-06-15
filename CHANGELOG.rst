@@ -14,7 +14,67 @@ Changelog
 Please See the `releases tab <https://github.com/openedx/xblock-lti-consumer/releases>`_ for the complete changelog.
 
 Unreleased
-~~~~~~~~~~
+----------
+
+11.3.1 - 2026-06-01
+--------------------
+* Fix LTI 1.3 deep linking launches to POST the ``id_token`` to the tool-provided ``redirect_uri``
+  rather than the platform-configured ``deep_linking_launch_url``. Per
+  `IMS Security Framework §5.1.1.3 <https://www.imsglobal.org/spec/security/v1p0#step-3-authentication-response>`_
+  and `LTI Deep Linking 2.0 §2.1 <https://www.imsglobal.org/spec/lti-dl/v2p0#redirection-from-platform-to-tool>`_,
+  the OIDC authentication response must always POST to ``redirect_uri``; ``deep_linking_launch_url``
+  belongs in the JWT as ``target_link_uri`` only.
+
+11.3.0 - 2026-05-29
+--------------------
+* Sync effective LTI version from external reusable configurations throughout XBlock runtime paths and Studio.
+* Hide LTI version selection in Studio for external and database-backed configurations to avoid stale version mismatches.
+* Show or hide LTI launch URL fields in Studio based on version resolved from external configuration.
+
+11.2.0 - 2026-04-30
+--------------------
+* Replace the flat Studio editor with a multi-step wizard (Setup → Advantage Settings → Review Options).
+* Update field display names and help text throughout for clarity.
+
+11.1.0 - 2026-04-24
+--------------------
+* Update LTI 1.3 launch and NRPS role mapping to use context role URIs.
+* Include supported forum roles like `Community TA` and `Group Moderator` in LTI 1.3 launches and NRPS membership responses.
+* Add ADR documenting updated LTI 1.3 role mapping behavior.
+
+11.0.1 - 2026-04-23
+--------------------
+* Fix LTI 1.3 deep linking `target_link_uri` handling in both preflight and launch token generation.
+* Fix AGS results endpoint/serializer URL generation for optional `user_id`, including trailing-slash compatibility.
+* Allow AGS score `comment` to be blank and improve related API test coverage.
+* Use `get_lti_consumer()` OAuth credentials for LTI 1.1 signature/logging paths and align LTI 1.1 errors with shared `LtiError`.
+* Minor internal cleanup: public `get_lti_consumer()` rename, launch URL typing/casting, and fallback to block `lti_version` when config version is missing.
+
+11.0.0 - 2026-04-20
+--------------------
+* Split LTI 1.3 Configuration into Passport Model
+* Fix duplicate, copy-paste for LTI xblocks
+* Add signal handlers for events like delete, duplicate etc.
+
+10.0.1 - 2026-03-17
+--------------------
+* Revert the quoting of location/usage_keys done in version 9.14.4 & 9.14.5.
+
+10.0.0 - 2026-03-09
+--------------------
+* Drop support for Python 3.11. Python 3.12 is now the minimum supported version.
+
+9.14.5 - 2026-03-05
+-------------------
+* Pass context claim in deep linking launch request & fix use external config deployment_id.
+
+9.14.4 - 2026-02-23
+-------------------
+* Add URL encoding of resource_link_id in the url params to resolve the parsing issue and allow empty resource_id.
+
+9.14.3 - 2025-10-22
+-------------------
+* fix: Convert UUIDField columns to uuid type for MariaDB
 
 9.14.2 - 2025-08-06
 -------------------

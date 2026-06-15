@@ -60,11 +60,11 @@ import bleach
 from django.conf import settings
 from django.utils import timezone
 from web_fragments.fragment import Fragment
-
 from webob import Response
 from xblock.core import List, Scope, String, XBlock
 from xblock.fields import Boolean, Float, Integer
 from xblock.validation import ValidationMessage
+
 try:
     from xblock.utils.resources import ResourceLoader
     from xblock.utils.studio_editable import StudioEditableXBlockMixin
@@ -74,19 +74,20 @@ except ModuleNotFoundError:  # For backward compatibility with releases older th
 
 from .data import Lti1p3LaunchData
 from .exceptions import LtiError
-from .lti_1p1.consumer import LtiConsumer1p1, parse_result_json, LTI_PARAMETERS
+from .filters import get_external_config_from_filter
+from .lti_1p1.consumer import LTI_PARAMETERS, LtiConsumer1p1, parse_result_json
 from .lti_1p1.oauth import log_authorization_header
 from .outcomes import OutcomeService
 from .plugin import compat
 from .track import track_event
 from .utils import (
-    _,
-    resolve_custom_parameter_template,
-    external_config_filter_enabled,
-    external_user_id_1p1_launches_enabled,
-    database_config_enabled,
     EXTERNAL_ID_REGEX,
+    _,
+    database_config_enabled,
+    external_config_filter_enabled,
     external_multiple_launch_urls_enabled,
+    external_user_id_1p1_launches_enabled,
+    resolve_custom_parameter_template,
 )
 
 log = logging.getLogger(__name__)
@@ -144,14 +145,14 @@ def valid_config_type_values(block):
     valid value options, depending on the state of the appropriate toggle.
     """
     values = [
-        {"display_name": _("Configuration on block"), "value": "new"}
+        {"display_name": _("New"), "value": "new"}
     ]
 
     if database_config_enabled(block.scope_ids.usage_id.context_key):
-        values.append({"display_name": _("Database Configuration"), "value": "database"})
+        values.append({"display_name": _("Database"), "value": "database"})
 
     if external_config_filter_enabled(block.scope_ids.usage_id.context_key):
-        values.append({"display_name": _("Reusable Configuration"), "value": "external"})
+        values.append({"display_name": _("Existing"), "value": "external"})
 
     return values
 
@@ -262,18 +263,15 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
     display_name = String(
         display_name=_("Display Name"),
         help=_(
-            "Enter the name that students see for this component. "
-            "Analytics reports may also use the display name to identify this component."
+            "Enter the name learners see for this component. This name may also appear in reports."
         ),
         scope=Scope.settings,
         default=_("LTI Consumer"),
     )
     description = String(
-        display_name=_("LTI Application Information"),
+        display_name=_("Data Sharing Notice"),
         help=_(
-            "Enter a description of the third party application. "
-            "If requesting username and/or email, use this text box to inform users "
-            "why their username and/or email will be forwarded to a third party application."
+            "Enter a short notice about the tool. Use this field to explain why learner data may be shared with it."
         ),
         default="",
         scope=Scope.settings
@@ -284,9 +282,8 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         values_provider=valid_config_type_values,
         default="new",
         help=_(
-            "Select 'Configuration on block' to configure a new LTI Tool. "
-            "If the support staff provided you with a pre-configured LTI reusable Tool ID, select"
-            "'Reusable Configuration' and enter it in the text field below."
+            "Select 'New' to configure a new LTI Tool. If your admin has provided you with ID of an existing "
+            "reusable tool configuration, select 'Existing' and enter it in the text field on the right."
         )
     )
 
@@ -299,46 +296,46 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         ],
         default="lti_1p1",
         help=_(
-            "Select the LTI version that your tool supports."
-            "<br />The XBlock LTI Consumer fully supports LTI 1.1.1, "
-            "LTI 1.3 and LTI Advantage features."
+            "Select the LTI version supported by your tool."
         ),
     )
 
     external_config = String(
-        display_name=_("LTI Reusable Configuration ID"),
+        display_name=_("LTI Reusability ID"),
         scope=Scope.settings,
-        help=_("Enter the reusable LTI external configuration ID provided by the support staff."),
+        help=_("Enter the ID of an existing reusable tool configuration."),
     )
 
     # LTI 1.3 fields
+    lti_1p3_passport_id = String(
+        display_name=_("Lti 1.3 passport ID that points to Lti1p3Passport table"),
+        scope=Scope.settings,
+        default="",
+        help=_("Passport ID for a reusable keys.")
+    )
+
     lti_1p3_launch_url = String(
-        display_name=_("Tool Launch URL"),
+        display_name=_("Launch URL"),
         default='',
         scope=Scope.settings,
         help=_(
-            "Enter the LTI 1.3 Tool Launch URL. "
-            "<br />This is the URL the LMS will use to launch the LTI Tool."
+            "Enter the launch URL for this tool. For LTI 1.3, this is the URL Open edX uses to launch the tool."
         ),
     )
     lti_1p3_oidc_url = String(
-        display_name=_("Tool Initiate Login URL"),
+        display_name=_("Tool Initiate Login URL (OIDC)"),
         default='',
         scope=Scope.settings,
         help=_(
-            "Enter the LTI 1.3 Tool OIDC Authorization url (can also be called login or login initiation URL)."
-            "<br />This is the URL the LMS will use to start a LTI authorization "
-            "prior to doing the launch request."
+            "Enter the tool’s OIDC login initiation URL. Open edX uses this URL to start the LTI 1.3 login flow."
         ),
     )
     lti_1p3_redirect_uris = List(
         display_name=_("Registered Redirect URIs"),
         help=_(
-            "Valid urls the Tool may request us to redirect the id token to. The redirect uris "
-            "are often the same as the launch url/deep linking url so if this field is "
-            "empty, it will use them as the default. If you need to use different redirect "
-            "uri's, enter them here. If you use this field you must enter all valid redirect "
-            "uri's the tool may request."
+            "Enter the redirect URIs this tool is allowed to use during login "
+            'e.g. ["https://tool.com", "https://tool_deeplink.com"]. Leave this blank to use '
+            "the launch URL and deep linking URL by default."
         ),
         scope=Scope.settings
     )
@@ -352,7 +349,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         ],
         default="public_key",
         help=_(
-            "Select how the tool's public key information will be specified."
+            "Choose how Open edX will get the tool’s public key for validating signed messages."
         ),
     )
     lti_1p3_tool_keyset_url = String(
@@ -360,13 +357,8 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         default='',
         scope=Scope.settings,
         help=_(
-            "Enter the LTI 1.3 Tool's JWK keysets URL."
-            "<br />This link should retrieve a JSON file containing"
-            " public keys and signature algorithm information, so"
-            " that the LMS can check if the messages and launch"
-            " requests received have the signature from the tool."
-            "<br /><b>This is not required when doing LTI 1.3 Launches"
-            " without LTI Advantage nor Basic Outcomes requests.</b>"
+            "Enter the URL of the tool’s JWK keyset. Open edX uses this URL to retrieve the "
+            "public keys needed to validate signed messages."
         ),
     )
     lti_1p3_tool_public_key = String(
@@ -375,18 +367,17 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         default='',
         scope=Scope.settings,
         help=_(
-            "Enter the LTI 1.3 Tool's public key."
-            "<br />This is a string that starts with '-----BEGIN PUBLIC KEY-----' and is required "
-            "so that the LMS can check if the messages and launch requests received have the signature "
-            "from the tool."
-            "<br /><b>This is not required when doing LTI 1.3 Launches without LTI Advantage nor "
-            "Basic Outcomes requests.</b>"
+            "Enter the tool’s public key in PEM format (starts with -----BEGIN PUBLIC KEY-----). "
+            "Use this when the tool provides a static public key directly."
         ),
     )
 
     lti_1p3_enable_nrps = Boolean(
-        display_name=_("Enable LTI NRPS"),
-        help=_("Enable LTI Names and Role Provisioning Services."),
+        display_name=_("Names & Roles (NRPS)"),
+        help=_(
+            "Enable this to allow the tool to access the names and roles of enrolled learners, "
+            "if the tool supports NRPS."
+        ),
         default=False,
         scope=Scope.settings
     )
@@ -394,7 +385,9 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
     # Switch to enable/disable the LTI Advantage Deep linking service
     lti_advantage_deep_linking_enabled = Boolean(
         display_name=_("Deep linking"),
-        help=_("Select True if you want to enable LTI Advantage Deep Linking."),
+        help=_(
+            "Enable this if you want to deep link content from within the tool, in Studio."
+        ),
         default=False,
         scope=Scope.settings
     )
@@ -403,37 +396,30 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         default='',
         scope=Scope.settings,
         help=_(
-            "Enter the LTI Advantage Deep Linking Launch URL. If the tool does not specify one, "
-            "use the same value as 'Tool Launch URL'."
+            "Enter the deep linking URL for this tool. If the tool does not specify one, enter the 'Launch URL' here."
         ),
     )
     lti_advantage_ags_mode = String(
-        display_name=_("LTI Assignment and Grades Service"),
+        display_name=_("Assignment and Grades"),
         values=[
+            {"display_name": _("Declarative"), "value": "declarative"},
+            {"display_name": _("Programmatic"), "value": "programmatic"},
             {"display_name": _("Disabled"), "value": "disabled"},
-            {"display_name": _("Allow tools to submit grades only (declarative)"), "value": "declarative"},
-            {"display_name": _("Allow tools to manage and submit grade (programmatic)"), "value": "programmatic"},
         ],
         default='declarative',
         scope=Scope.settings,
         help=_(
-            "Enable the LTI-AGS service and select the functionality enabled for LTI tools. "
-            "The 'declarative' mode (default) will provide a tool with a LineItem created from the XBlock settings, "
-            "while the 'programmatic' one will allow tools to manage, create and link the grades."
+            "Enable AGS and select functionality. 'Declarative' provides the tool with an existing line item. "
+            "'Programmatic' allows tools to create and manage line items."
         ),
     )
 
     # LTI 1.1 fields
     lti_id = String(
-        display_name=_("LTI ID"),
+        display_name=_("LTI Passport ID"),
         help=_(
-            "Enter the LTI ID for the external LTI provider. "
-            "This value must be the same LTI ID that you entered in the "
-            "LTI Passports setting on the Advanced Settings page."
-            "<br />See the {docs_anchor_open}edX LTI documentation{anchor_close} for more details on this setting."
-        ).format(
-            docs_anchor_open=DOCS_ANCHOR_TAG_OPEN,
-            anchor_close="</a>"
+            "Select the LTI passport ID for this tool. This is the ID of the LTI passport that "
+            "you created on Advanced Settings page."
         ),
         default='',
         scope=Scope.settings
@@ -441,12 +427,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
     launch_url = String(
         display_name=_("LTI URL"),
         help=_(
-            "Enter the URL of the external tool that this component launches. "
-            "This setting is only used when Hide External Tool is set to False."
-            "<br />See the {docs_anchor_open}edX LTI documentation{anchor_close} for more details on this setting."
-        ).format(
-            docs_anchor_open=DOCS_ANCHOR_TAG_OPEN,
-            anchor_close="</a>"
+            "Enter the launch URL for this tool. For LTI 1.1/1.2, this is the URL Open edX uses to launch the tool."
         ),
         default='',
         scope=Scope.settings
@@ -456,17 +437,12 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
     custom_parameters = List(
         display_name=_("Custom Parameters"),
         help=_(
-            "Add the key/value pair for any custom parameters, such as the page your e-book should open to or "
-            "the background color for this component. Ex. [\"page=1\", \"color=white\"]"
-            "<br />See the {docs_anchor_open}edX LTI documentation{anchor_close} for more details on this setting."
-        ).format(
-            docs_anchor_open=DOCS_ANCHOR_TAG_OPEN,
-            anchor_close="</a>"
+            'Enter key-value pairs to send with each launch e.g. ["page=1", "color=white"].'
         ),
         scope=Scope.settings
     )
     launch_target = String(
-        display_name=_("LTI Launch Target"),
+        display_name=_("Open tool in"),
         help=_(
             "Select Inline if you want the LTI content to open in an IFrame in the current page. "
             "Select Modal if you want the LTI content to open in a modal window in the current page. "
@@ -484,7 +460,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         ],
     )
     button_text = String(
-        display_name=_("Button Text"),
+        display_name=_("Launch Button Text"),
         help=_(
             "Enter the text on the button used to launch the third party application. "
             "This setting is only used when Hide External Tool is set to False and "
@@ -494,47 +470,39 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         scope=Scope.settings
     )
     inline_height = Integer(
-        display_name=_("Inline Height"),
+        display_name=_("Inline Height (px)"),
         help=_(
-            "Enter the desired pixel height of the iframe which will contain the LTI tool. "
-            "This setting is only used when Hide External Tool is set to False and "
-            "LTI Launch Target is set to Inline."
+            "Enter the height of the inline iframe in pixels."
         ),
         default=800,
         scope=Scope.settings
     )
     modal_height = Integer(
-        display_name=_("Modal Height"),
+        display_name=_("Modal Height (%)"),
         help=_(
-            "Enter the desired viewport percentage height of the modal overlay which will contain the LTI tool. "
-            "This setting is only used when Hide External Tool is set to False and "
-            "LTI Launch Target is set to Modal."
+            "Enter the modal height as a percentage of the browser window."
         ),
         default=80,
         scope=Scope.settings
     )
     modal_width = Integer(
-        display_name=_("Modal Width"),
+        display_name=_("Modal Width (%)"),
         help=_(
-            "Enter the desired viewport percentage width of the modal overlay which will contain the LTI tool. "
-            "This setting is only used when Hide External Tool is set to False and "
-            "LTI Launch Target is set to Modal."
+            "Enter the modal width as a percentage of the browser window."
         ),
         default=80,
         scope=Scope.settings
     )
     has_score = Boolean(
-        display_name=_("Scored"),
-        help=_("Select True if this component will receive a numerical score from the external LTI system."),
+        display_name=_("This activity is graded"),
+        help=_("Enable this if the tool sends a numeric score back to Open edX."),
         default=False,
         scope=Scope.settings
     )
     weight = Float(
-        display_name="Weight",
+        display_name=_("Grade Weight"),
         help=_(
-            "Enter the number of points possible for this component.  "
-            "The default value is 1.0.  "
-            "This setting is only used when Scored is set to True."
+            "Enter the maximum number of points for this component."
         ),
         default=1.0,
         scope=Scope.settings,
@@ -553,16 +521,14 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
     hide_launch = Boolean(
         display_name=_("Hide External Tool"),
         help=_(
-            "Select True if you want to use this component as a placeholder for syncing with an external grading  "
-            "system rather than launch an external tool.  "
-            "This setting hides the Launch button and any IFrames for this component."
+            "Enable this to hide launch button and iframe so you use the component for grade sync etc."
         ),
         default=False,
         scope=Scope.settings
     )
     accept_grades_past_due = Boolean(
-        display_name=_("Accept grades past deadline"),
-        help=_("Select True to allow third party systems to post grades past the deadline."),
+        display_name=_("Accept grades after due date"),
+        help=_("Enable this to allow the tool to send grades after the due date has passed."),
         default=True,
         scope=Scope.settings
     )
@@ -570,31 +536,30 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
     # party application. When "Open in New Page" is not selected, the tool automatically appears without any
     # user action.
     ask_to_send_username = Boolean(
-        display_name=_("Request user's username"),
+        display_name=_("Share Username"),
         # Translators: This is used to request the user's username for a third party service.
-        help=_("Select True to request the user's username."),
+        help=_("Enable this to send the learner’s username to the tool."),
         default=False,
         scope=Scope.settings
     )
     ask_to_send_full_name = Boolean(
-        display_name=_("Request user's full name"),
+        display_name=_("Share Full name"),
         # Translators: This is used to request the user's full name for a third party service.
-        help=_("Select True to request the user's full name."),
+        help=_("Enable this to send the learner’s full name to the tool."),
         default=False,
         scope=Scope.settings
     )
     ask_to_send_email = Boolean(
-        display_name=_("Request user's email"),
+        display_name=_("Share Email"),
         # Translators: This is used to request the user's email for a third party service.
-        help=_("Select True to request the user's email address."),
+        help=_("Enable this to send the learner’s email address to the tool."),
         default=False,
         scope=Scope.settings
     )
 
     enable_processors = Boolean(
         display_name=_("Send extra parameters"),
-        help=_("Select True to send the extra parameters, which might contain Personally Identifiable Information. "
-               "The processors are site-wide, please consult the site administrator if you have any questions."),
+        help=_("Enable this to send extra parameters (may contain PII). Consult site admin for details."),
         default=False,
         scope=Scope.settings
     )
@@ -705,7 +670,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         # a new LTI ID before they've added it to advanced settings, but we do want to warn them about it.
         # If we put this check in validate_field_data(), the settings editor wouldn't let them save changes.
         course = self.course
-        if course and self.lti_version == "lti_1p1" and self.lti_id:
+        if course and self.config_type == "new" and self.lti_version == "lti_1p1" and self.lti_id:
             lti_passport_ids = [lti_passport.split(':')[0].strip() for lti_passport in course.lti_passports]
             if self.lti_id.strip() not in lti_passport_ids:
                 validation.add(ValidationMessage(ValidationMessage.WARNING, str(
@@ -801,7 +766,12 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         # editing of 'ask_to_send_username', 'ask_to_send_full_name', and 'ask_to_send_email'.
         pii_sharing_enabled = self.get_pii_sharing_enabled()
         if not pii_sharing_enabled:
-            noneditable_fields.extend(['ask_to_send_username', 'ask_to_send_full_name', 'ask_to_send_email'])
+            noneditable_fields.extend([
+                'ask_to_send_username',
+                'ask_to_send_full_name',
+                'ask_to_send_email',
+                'description',
+            ])
 
         editable_fields = tuple(
             field
@@ -929,6 +899,32 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             raise LtiError(self.ugettext("Could not get user id for current request"))
         return str(user_id)
 
+    def _get_lti_1p3_user_role(self):
+        """
+        Return effective LTI 1.3 user role, including supported forum roles.
+        """
+        role = self.role
+
+        # Map Global staff to instance-admin LTI role set.
+        if self.user_is_staff:
+            return 'global_staff'
+
+        # Keep privileged course roles unchanged.
+        # `staff`, `instructor`, and `limited_staff` already map to stronger LTI roles
+        # than forum roles like `Community TA` or `Group Moderator`, so forum role
+        # should only override learner-like base roles.
+        if role in {'staff', 'instructor', 'limited_staff'}:
+            return role
+
+        forum_role = compat.get_user_course_forum_role(
+            self.lms_user_id,
+            self.scope_ids.usage_id.context_key,
+        )
+        if forum_role in {'Community TA', 'Group Moderator'}:
+            return forum_role
+
+        return role
+
     def get_lti_1p1_user_id(self):
         """
         Returns the user ID to send to an LTI tool during an LTI 1.1/2.0 launch. If the
@@ -994,7 +990,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         i4x-2-3-lti-31de800015cf4afb973356dbe81496df this part of resource_link_id:
         makes resource_link_id to be unique among courses inside same system.
         """
-        return str(urllib.parse.quote(f"{settings.LMS_BASE}-{self.scope_ids.usage_id.html_id()}"))
+        return str(self.scope_ids.usage_id)
 
     @property
     def lis_result_sourcedid(self):
@@ -1099,7 +1095,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             close_date = due_date
         return close_date is not None and timezone.now() > close_date
 
-    def _get_lti_consumer(self):
+    def get_lti_consumer(self):
         """
         Returns a preconfigured LTI consumer depending on the value.
 
@@ -1121,6 +1117,68 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         from lti_consumer.api import config_id_for_block, get_lti_consumer
 
         return get_lti_consumer(config_id_for_block(self))
+
+    def get_resolved_lti_version(self):
+        """
+        Return the effective LTI version for this block.
+
+        When `config_type` is `"external"`, the version is determined
+        by the external re-usable config's `version` key, not by the
+        block's own `lti_version` field.  Falls back to `self.lti_version`
+        for non-external configs or when external config has no version.
+
+        If the external config lookup raises (e.g. filter service
+        unavailable), the exception is logged and the block's own
+        `lti_version` is returned as a safe fallback.
+        """
+        if self.config_type != "external":
+            return self.lti_version
+
+        try:
+            config = get_external_config_from_filter(
+                {"course_key": self.scope_ids.usage_id.context_key},
+                self.external_config,
+            )
+        except Exception:  # pylint: disable=broad-except
+            log.exception(
+                "Failed to resolve external config version for config_id=%s; "
+                "falling back to block-level lti_version=%s",
+                self.external_config,
+                self.lti_version,
+            )
+            return self.lti_version
+
+        return config.get("version") or self.lti_version
+
+    @XBlock.json_handler
+    def resolve_external_config_version(self, data, suffix=''):  # pylint: disable=unused-argument
+        """
+        Handler for Studio to resolve the LTI version for a given
+        external config ID.  Returns only the version — no secrets
+        from the external configuration are exposed.
+
+        If the filter lookup raises (e.g. service unavailable), the
+        exception is logged and a safe fallback response is returned
+        so the Studio UI degrades gracefully.
+        """
+        config_id = data.get('config_id', '')
+        if not config_id:
+            return {'found': False, 'version': None}
+
+        try:
+            config = get_external_config_from_filter(
+                {"course_key": self.scope_ids.usage_id.context_key},
+                config_id,
+            )
+        except Exception:  # pylint: disable=broad-except
+            log.exception(
+                "Failed to resolve external config version for config_id=%s",
+                config_id,
+            )
+            return {'found': False, 'version': None}
+
+        version = config.get("version") if config else None
+        return {'found': version is not None, 'version': version}
 
     def extract_real_user_data(self):
         """
@@ -1185,14 +1243,92 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         Get Studio View fragment
         """
         loader = ResourceLoader(__name__)
-        fragment = super().studio_view(context)
 
-        fragment.add_javascript(loader.load_unicode("static/js/xblock_studio_view.js"))
+        course = self.course
+        if course:
+            lti_passport_ids = [lti_passport.split(':')[0].strip() for lti_passport in course.lti_passports]
+        else:
+            lti_passport_ids = []
+
+        context = {
+            'fields': {},
+            'pii_sharing_enabled': self.get_pii_sharing_enabled(),
+            'lti_passports': lti_passport_ids,
+        }
+
+        # Add editable fields to context
+        for field_name in self.editable_fields:
+            field = self.fields[field_name]  # pylint: disable=unsubscriptable-object
+            field_info = self._make_field_info(field_name, field)
+            if field_info is not None:
+                context["fields"][field_name] = field_info
+
+        # Compute effective LTI version once and reuse for both the template
+        # context override and the JS context below.
+        effective_lti_version = self.get_resolved_lti_version()
+
+        # Override lti_version display value for external config
+        # so Studio shows the effective version from the external config.
+        if self.config_type == 'external' and 'lti_version' in context['fields']:
+            context['fields']['lti_version']['value'] = effective_lti_version
+
+        i18n_service = self.runtime.service(self, 'i18n')
+
+        # ResourceLoader renders template from string, not Django loader-backed template.
+        # Django `{% include %}` cannot resolve partial paths in this setup, so pre-render
+        # partial templates here and inject safe HTML into wrapper template.
+        context.update({
+            'stepper_header_html': loader.render_django_template(
+                '/templates/html/lti_studio_edit/_stepper_header.html',
+                context=context,
+                i18n_service=i18n_service,
+            ),
+            'step_setup_html': loader.render_django_template(
+                '/templates/html/lti_studio_edit/_step_setup.html',
+                context=context,
+                i18n_service=i18n_service,
+            ),
+            'step_advantage_html': loader.render_django_template(
+                '/templates/html/lti_studio_edit/_step_advantage.html',
+                context=context,
+                i18n_service=i18n_service,
+            ),
+            'step_review_html': loader.render_django_template(
+                '/templates/html/lti_studio_edit/_step_review.html',
+                context=context,
+                i18n_service=i18n_service,
+            ),
+            'actions_html': loader.render_django_template(
+                '/templates/html/lti_studio_edit/_actions.html',
+                context=context,
+                i18n_service=i18n_service,
+            ),
+        })
+
+        fragment = Fragment()
+        fragment.add_content(loader.render_django_template(
+            '/templates/html/lti_studio_edit.html',
+            context=context,
+            i18n_service=i18n_service,
+        ))
+
+        fragment.add_css(loader.load_unicode('static/css/xblock_studio_view.css'))
+        fragment.add_javascript(loader.load_unicode('static/js/xblock_studio_view.js'))
+
         js_context = {
             "EXTERNAL_MULTIPLE_LAUNCH_URLS_ENABLED": external_multiple_launch_urls_enabled(
                 self.scope_ids.usage_id.course_key
-            )
+            ),
+            "editableFields": self.editable_fields,
+            "effectiveLtiVersion": effective_lti_version,
+            "currentExternalConfig": self.external_config,
+            "rawLtiVersion": self.lti_version,
         }
+
+        statici18n_js_url = self._get_statici18n_js_url()
+        if statici18n_js_url:
+            fragment.add_javascript_url(statici18n_js_url)
+
         fragment.initialize_js('LtiConsumerXBlockInitStudio', js_context)
 
         return fragment
@@ -1205,7 +1341,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         If using LTI 1.3 it displays a fragment with parameters that
         need to be set on the LTI Tool to make the integration work.
         """
-        if self.lti_version == "lti_1p1":
+        if self.get_resolved_lti_version() == "lti_1p1":
             return self.student_view(context)
 
         # Render template
@@ -1243,7 +1379,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
 
         # Prepend the author view for LTI1.3 when rendering student view to staff users in Studio.
         # This is needed so course staff can see the author view parameters when configuring within Libraries v2
-        if settings.SERVICE_VARIANT != 'lms' and self.lti_version == "lti_1p3" and self.user_is_staff:
+        if settings.SERVICE_VARIANT != 'lms' and self.get_resolved_lti_version() == "lti_1p3" and self.user_is_staff:
             self._add_author_view(context, loader, fragment)
 
         fragment.add_content(loader.render_mako_template('/templates/html/student.html', context))
@@ -1272,7 +1408,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         Returns:
             webob.response: HTML LTI launch form
         """
-        lti_consumer = self._get_lti_consumer()
+        lti_consumer = self.get_lti_consumer()
 
         # Occassionally, users try to do an LTI launch while they are unauthenticated. It is not known why this occurs.
         # Sometimes, it is due to a web crawlers; other times, it is due to actual users of the platform. Regardless,
@@ -1370,12 +1506,12 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             Sucess: https://tools.ietf.org/html/rfc6749#section-4.4.3
             Failure: https://tools.ietf.org/html/rfc6749#section-5.2
         """
-        if self.lti_version != "lti_1p3":
+        if self.get_resolved_lti_version() != "lti_1p3":
             return Response(status=404)
 
         # Asserting that the consumer can be created. This makes sure that the LtiConfiguration
         # object exists before calling the Django View
-        assert self._get_lti_consumer()
+        assert self.get_lti_consumer()
         # Runtime import because this can only be run in the LMS/Studio Django
         # environments. Importing the views on the top level will cause RuntimeErorr
         from lti_consumer.plugin.views import access_token_endpoint  # pylint: disable=import-outside-toplevel
@@ -1431,12 +1567,11 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         Returns:
             webob.response:  response to this request.  See above for details.
         """
-        lti_consumer = self._get_lti_consumer()
+        lti_consumer = self.get_lti_consumer()
         lti_consumer.set_outcome_service_url(self.outcome_service_url)
 
         if settings.DEBUG:
-            lti_provider_key, lti_provider_secret = self.lti_provider_key_secret
-            log_authorization_header(request, lti_provider_key, lti_provider_secret)
+            log_authorization_header(request, lti_consumer.oauth_key, lti_consumer.oauth_secret)
 
         if not self.accept_grades_past_due and self.is_past_due:
             return Response(status=404)  # have to do 404 due to spec, but 400 is better, with error msg in body
@@ -1591,15 +1726,15 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         self.module_score = scaled_score
         self.score_comment = comment
 
-    def _get_lti_launch_url(self, consumer):
+    def _get_lti_launch_url(self, consumer) -> str:
         """
         Return the LTI launch URL.
         """
-        launch_url = self.launch_url
+        launch_url = str(self.launch_url)
 
         # The lti_launch_url property only exists on the LtiConsumer1p1. The LtiConsumer1p3 does not have an
         # attribute with this name, so ensure that we're accessing it on the appropriate consumer class.
-        if consumer and self.config_type in ("database", "external") and self.lti_version == "lti_1p1":
+        if consumer and self.config_type in ("database", "external") and self.get_resolved_lti_version() == "lti_1p1":
             launch_url = consumer.lti_launch_url
 
         return launch_url
@@ -1669,9 +1804,9 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
 
         launch_data = Lti1p3LaunchData(
             user_id=self.lms_user_id,
-            user_role=self.role,
+            user_role=self._get_lti_1p3_user_role(),
             config_id=config_id,
-            resource_link_id=str(location),
+            resource_link_id=self.resource_link_id,
             external_user_id=self.external_user_id,
             preferred_username=username,
             name=full_name,
@@ -1701,7 +1836,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         """
         Return the LTI block launch handler.
         """
-        if self.lti_version == 'lti_1p1':
+        if self.get_resolved_lti_version() == 'lti_1p1':
             lti_block_launch_handler = self.runtime.handler_url(self, 'lti_launch_handler').rstrip('/?')
         else:
             launch_data = self.get_lti_1p3_launch_data()
@@ -1722,7 +1857,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         lti_1p3_launch_url = self.lti_1p3_launch_url.strip()
 
         # Get LTI launch URL from consumer if using database or external configuration type.
-        if consumer and self.lti_version == 'lti_1p3' and self.config_type in ('database', 'external'):
+        if consumer and self.get_resolved_lti_version() == 'lti_1p3' and self.config_type in ('database', 'external'):
             lti_1p3_launch_url = consumer.launch_url
 
         return lti_1p3_launch_url
@@ -1748,7 +1883,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         # Don't pull from the Django database unless the config_type is one that stores the LTI configuration in the
         # database.
         if self.config_type in ("database", "external"):
-            lti_consumer = self._get_lti_consumer()
+            lti_consumer = self.get_lti_consumer()
 
         launch_url = self._get_lti_launch_url(lti_consumer)
         lti_block_launch_handler = self._get_lti_block_launch_handler()
@@ -1781,7 +1916,7 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
             'modal_horizontal_offset': self._get_modal_position_offset(self.modal_width),
             'modal_width': self.modal_width,
             'accept_grades_past_due': self.accept_grades_past_due,
-            'lti_version': self.lti_version,
+            'lti_version': self.get_resolved_lti_version(),
         }
 
     def _get_modal_position_offset(self, viewport_percentage):
@@ -1836,3 +1971,26 @@ class LtiConsumerXBlock(StudioEditableXBlockMixin, XBlock):
         xblock_body["content_type"] = "LTI Consumer"
 
         return xblock_body
+
+    def add_xml_to_node(self, node):
+        """
+        The lti_1p3_passport_id XBlock field may be empty on blocks that existed before
+        the Lti1p3Passport model was introduced (migration 0021). Rather than backfilling
+        the field in the migration (which requires the XBlock runtime and can fail silently),
+        we read the authoritative passport_id from the DB at export time. This ensures that
+        when a block is duplicated or exported/imported, the receiving block's
+        lti_1p3_passport_id field is populated and can be used to find the shared passport
+        instead of creating new credentials.
+        """
+        super().add_xml_to_node(node)
+
+        try:
+            from .models import LtiConfiguration  # pylint: disable=import-outside-toplevel
+
+            configuration = LtiConfiguration.objects.select_related("lti_1p3_passport").get(
+                location=self.scope_ids.usage_id,
+            )
+            if configuration.lti_1p3_passport:
+                node.set("lti_1p3_passport_id", str(configuration.lti_1p3_passport.passport_id))
+        except LtiConfiguration.DoesNotExist:
+            pass
