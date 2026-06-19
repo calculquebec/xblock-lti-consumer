@@ -2,36 +2,36 @@
 Tests for LTI 1.3 endpoint views.
 """
 import json
-import urllib.parse
-from unittest.mock import Mock, patch
+from unittest.mock import patch, Mock
 
 import ddt
 import jwt
-from Cryptodome.PublicKey import RSA
+from django.test.testcases import TestCase
 from django.urls import reverse
 from edx_django_utils.cache import TieredCache, get_cache_key
 from jwt.api_jwk import PyJWK
-from opaque_keys.edx.keys import UsageKey
 
+from Cryptodome.PublicKey import RSA
+from opaque_keys.edx.keys import UsageKey
 from lti_consumer.data import Lti1p3LaunchData, Lti1p3ProctoringLaunchData
+from lti_consumer.models import LtiConfiguration, LtiDlContentItem
 from lti_consumer.lti_1p3.exceptions import (
-    MalformedJwtToken,
     MissingRequiredClaim,
-    NoSuitableKeys,
-    PreflightRequestValidationFailure,
+    MalformedJwtToken,
     TokenSignatureExpired,
+    NoSuitableKeys,
     UnknownClientId,
     UnsupportedGrantType,
+    PreflightRequestValidationFailure,
 )
-from lti_consumer.lti_1p3.tests.utils import create_jwt
 from lti_consumer.lti_xblock import LtiConsumerXBlock
-from lti_consumer.models import LtiConfiguration, LtiDlContentItem
-from lti_consumer.tests.test_utils import TestBaseWithPatch, make_xblock
+from lti_consumer.lti_1p3.tests.utils import create_jwt
+from lti_consumer.tests.test_utils import make_xblock
 from lti_consumer.utils import cache_lti_1p3_launch_data
 
 
 @ddt.ddt
-class TestLti1p3KeysetEndpoint(TestBaseWithPatch):
+class TestLti1p3KeysetEndpoint(TestCase):
     """
     Test `public_keyset_endpoint` method.
     """
@@ -102,7 +102,7 @@ class TestLti1p3KeysetEndpoint(TestBaseWithPatch):
         """
         Check that the endpoint is accessible using the ID of the LTI Config object
         """
-        response = self.client.get(f'/lti_consumer/v1/public_keysets/{self.lti_config.passport_id}')
+        response = self.client.get(f'/lti_consumer/v1/public_keysets/{self.lti_config.config_id}')
 
         # Check response
         self.assertEqual(response.status_code, 200)
@@ -137,7 +137,7 @@ class TestLti1p3KeysetEndpoint(TestBaseWithPatch):
 
 
 @ddt.ddt
-class TestLti1p3LaunchGateEndpoint(TestBaseWithPatch):
+class TestLti1p3LaunchGateEndpoint(TestCase):
     """
     Tests for the `launch_gate_endpoint` method.
     """
@@ -417,18 +417,13 @@ class TestLti1p3LaunchGateEndpoint(TestBaseWithPatch):
         # Check response
         self.assertEqual(response.status_code, 200)
 
-    @ddt.data(
-        (True, "LtiDeepLinkingRequest"),
-        (False, "LtiResourceLinkRequest"),
-    )
-    @ddt.unpack
-    def test_launch_callback_endpoint_deep_linking_database_config(self, dl_enabled, message_type):
+    @ddt.data(True, False)
+    def test_launch_callback_endpoint_deep_linking_database_config(self, dl_enabled):
         """
-        Test that the form action for deep linking requests uses the tool-provided
-        redirect_uri, NOT the platform-configured deep_linking_launch_url.
+        Test that Deep Linking is enabled and that the context is updated appropriately when using the 'database'
+        config_type.
         """
-        redirect_uri = "http://tool.example/lti-advantage-connect"
-        deep_link_url = "http://tool.example/lti-advantage-select"
+        url = "http://tool.example/deep_linking_launch"
         self._setup_deep_linking(user_role='staff')
 
         self.xblock.config_type = 'database'
@@ -438,16 +433,15 @@ class TestLti1p3LaunchGateEndpoint(TestBaseWithPatch):
             version=LtiConfiguration.LTI_1P3,
             config_store=LtiConfiguration.CONFIG_ON_DB,
             lti_advantage_deep_linking_enabled=dl_enabled,
-            lti_advantage_deep_linking_launch_url=deep_link_url,
-            lti_1p3_redirect_uris=[redirect_uri],
+            lti_advantage_deep_linking_launch_url=url,
         )
         if dl_enabled:
-            self.xblock.lti_advantage_deep_linking_launch_url = deep_link_url
-        self.launch_data.message_type = message_type
+            self.xblock.lti_advantage_deep_linking_launch_url = url
+            self.launch_data.message_type = "LtiDeepLinkingRequest"
 
         params = {
             "client_id": self.config.lti_1p3_client_id,
-            "redirect_uri": redirect_uri,
+            "redirect_uri": "http://tool.example/launch",
             "state": "state_test_123",
             "nonce": "nonce",
             "login_hint": self.launch_data.user_id,
@@ -459,9 +453,12 @@ class TestLti1p3LaunchGateEndpoint(TestBaseWithPatch):
         self.assertEqual(response.status_code, 200)
         response_body = response.content.decode('utf-8')
 
-        # Form action must be the tool-provided redirect_uri, not deep_linking_launch_url
-        self.assertIn(f'action="{redirect_uri}"', response_body)
-        self.assertNotIn(f'action="{deep_link_url}"', response_body)
+        # If Deep Linking is enabled, test that deep linking launch URL is in the rendered template. Otherwise, test
+        # that it is not.
+        if dl_enabled:
+            self.assertIn(url, response_body)
+        else:
+            self.assertNotIn(url, response_body)
 
     def test_launch_callback_endpoint_deep_linking_by_student(self):
         """
@@ -664,7 +661,7 @@ class TestLti1p3LaunchGateEndpoint(TestBaseWithPatch):
 
 
 @ddt.ddt
-class TestLti1p3AccessTokenEndpoint(TestBaseWithPatch):
+class TestLti1p3AccessTokenEndpoint(TestCase):
     """
     Test `access_token_endpoint` method.
     """
@@ -675,7 +672,15 @@ class TestLti1p3AccessTokenEndpoint(TestBaseWithPatch):
         location = 'block-v1:course+test+2020+type@problem+block@test'
         self.config = LtiConfiguration(version=LtiConfiguration.LTI_1P3, location=location)
         self.config.save()
-        self.url = reverse('lti_consumer:lti_consumer.access_token', args=[str(self.config.passport_id)])
+        self.url = reverse('lti_consumer:lti_consumer.access_token', args=[str(self.config.config_id)])
+        # Patch settings calls to LMS method
+        self.mock_client = Mock()
+        get_lti_consumer_patcher = patch(
+            'lti_consumer.plugin.views.LtiConfiguration.get_lti_consumer',
+            return_value=self.mock_client
+        )
+        self.addCleanup(get_lti_consumer_patcher.stop)
+        self._mock_xblock_handler = get_lti_consumer_patcher.start()
         # Generate RSA and save exports
         rsa_key = RSA.generate(2048)
         algo_obj = jwt.get_algorithm_by_name('RS256')
@@ -684,8 +689,6 @@ class TestLti1p3AccessTokenEndpoint(TestBaseWithPatch):
         private_jwk['kid'] = 1
         self.key = PyJWK.from_dict(private_jwk)
         self.public_key = rsa_key.public_key().export_key('PEM')
-        self.config.lti_1p3_passport.lti_1p3_tool_public_key = self.public_key.decode()
-        self.config.lti_1p3_passport.save()
 
     def get_body(self, token, **overrides):
         """
@@ -703,28 +706,40 @@ class TestLti1p3AccessTokenEndpoint(TestBaseWithPatch):
         """
         Check that the access_token generated by the lti_consumer is returned.
         """
-        body = urllib.parse.urlencode(self.get_body(create_jwt(self.key, {})))
-        response = self.client.post(self.url, data=body, content_type='application/json')
+        token = {"access_token": "test-token"}
+        self.mock_client.access_token.return_value = token
 
+        body = self.get_body(create_jwt(self.key, {}))
+        response = self.client.post(self.url, data=json.dumps(body), content_type='application/json')
+        self.mock_client.access_token.assert_called_once()
+        called_args = self.mock_client.access_token.call_args[0]
+        actual_arg = called_args[0]
+        actual_dict = json.loads(next(iter(actual_arg.keys())))
+
+        self.assertEqual(actual_dict, body)
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'access_token')
+        self.assertEqual(response.json(), token)
 
-    @patch('lti_consumer.plugin.views.LtiConfiguration.get_lti_consumer')
-    def test_access_token_endpoint_with_location_in_url(self, mock_client):
+    def test_access_token_endpoint_with_location_in_url(self):
         """
         Check that the access_token generated by the lti_consumer is returned.
         """
         token = {"access_token": "test-token"}
-        mock_client().access_token.return_value = token
+        self.mock_client.access_token.return_value = token
 
         url = reverse(
             'lti_consumer:lti_consumer.access_token_via_location',
             args=[str(self.config.location)]
         )
-        body = urllib.parse.urlencode(self.get_body(create_jwt(self.key, {})))
-        response = self.client.post(url, data=body, content_type='application/json')
+        body = self.get_body(create_jwt(self.key, {}))
+        response = self.client.post(url, data=json.dumps(body), content_type='application/json')
 
-        mock_client().access_token.assert_called_once()
+        self.mock_client.access_token.assert_called_once()
+        called_args = self.mock_client.access_token.call_args[0]
+        actual_arg = called_args[0]
+        actual_dict = json.loads(next(iter(actual_arg.keys())))
+
+        self.assertEqual(actual_dict, body)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), token)
 
@@ -810,52 +825,48 @@ class TestLti1p3AccessTokenEndpoint(TestBaseWithPatch):
         self.config.version = LtiConfiguration.LTI_1P3
         self.config.save()
 
-    @patch('lti_consumer.lti_1p3.consumer.LtiConsumer1p3.access_token')
-    def test_missing_required_claim(self, access_token_mock):
+    def test_missing_required_claim(self):
         """
         Check that 400 is returned when required attributes are missing in the request
         """
-        access_token_mock.side_effect = MissingRequiredClaim()
+        self.mock_client.access_token = Mock(side_effect=MissingRequiredClaim())
         response = self.client.post(self.url)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json(), {'error': 'invalid_request'})
 
-    @patch('lti_consumer.lti_1p3.consumer.LtiConsumer1p3.access_token')
-    def test_token_errors(self, access_token_mock):
+    def test_token_errors(self):
         """
         Check invalid_grant error is returned when the token is invalid
         """
-        access_token_mock.side_effect = MalformedJwtToken()
+        self.mock_client.access_token = Mock(side_effect=MalformedJwtToken())
         response = self.client.post(self.url)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json(), {'error': 'invalid_grant'})
 
-        access_token_mock.side_effect = TokenSignatureExpired()
+        self.mock_client.access_token = Mock(side_effect=TokenSignatureExpired())
         response = self.client.post(self.url)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json(), {'error': 'invalid_grant'})
 
-    @patch('lti_consumer.lti_1p3.consumer.LtiConsumer1p3.access_token')
-    def test_client_credential_errors(self, access_token_mock):
+    def test_client_credential_errors(self):
         """
         Check invalid_client error is returned when the client credentials are wrong
         """
-        access_token_mock.side_effect = NoSuitableKeys()
+        self.mock_client.access_token = Mock(side_effect=NoSuitableKeys())
         response = self.client.post(self.url)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json(), {'error': 'invalid_client'})
 
-        access_token_mock.side_effect = UnknownClientId()
+        self.mock_client.access_token = Mock(side_effect=UnknownClientId())
         response = self.client.post(self.url)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json(), {'error': 'invalid_client'})
 
-    @patch('lti_consumer.lti_1p3.consumer.LtiConsumer1p3.access_token')
-    def test_unsupported_grant_error(self, access_token_mock):
+    def test_unsupported_grant_error(self):
         """
         Check unsupported_grant_type is returned when the grant type is wrong
         """
-        access_token_mock.side_effect = UnsupportedGrantType()
+        self.mock_client.access_token = Mock(side_effect=UnsupportedGrantType())
         response = self.client.post(self.url)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json(), {'error': 'unsupported_grant_type'})

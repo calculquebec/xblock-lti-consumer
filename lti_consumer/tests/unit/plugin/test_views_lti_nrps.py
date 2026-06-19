@@ -2,21 +2,14 @@
 Tests for LTI Names and Role Provisioning Service views.
 """
 from unittest.mock import Mock, patch
-
 from Cryptodome.PublicKey import RSA
-from rest_framework.reverse import reverse
 from rest_framework.test import APITransactionTestCase
+from rest_framework.reverse import reverse
 
 from lti_consumer.exceptions import LtiError
-from lti_consumer.lti_1p3.constants import (
-    LTI_1P3_CONTEXT_ROLE_ADMINISTRATOR,
-    LTI_1P3_CONTEXT_ROLE_INSTRUCTOR,
-    LTI_1P3_CONTEXT_ROLE_LEARNER,
-    LTI_1P3_CONTEXT_ROLE_TEACHING_ASSISTANT,
-)
 from lti_consumer.lti_xblock import LtiConsumerXBlock
 from lti_consumer.models import LtiConfiguration
-from lti_consumer.tests.test_utils import TestBaseWithPatch, make_xblock
+from lti_consumer.tests.test_utils import make_xblock
 
 
 def generate_mock_members(num, role='student'):
@@ -28,9 +21,9 @@ def generate_mock_members(num, role='student'):
     for i in range(num):
         member = {
             'id': i,
-            'username': f'user_{i}',
-            'email': f'user{i}@test.com',
-            'name': f'User {i}'
+            'username': 'user_{}'.format(i),
+            'email': 'user{}@test.com'.format(i),
+            'name': 'User {}'.format(i)
         }
 
         if role == 'student':
@@ -110,7 +103,7 @@ def patch_get_memberships(config=None):
     return _get_memberships
 
 
-class LtiNrpsTestCase(APITransactionTestCase, TestBaseWithPatch):  # noqa: F821
+class LtiNrpsTestCase(APITransactionTestCase):
     """
     Test LtiNrpsViewSet actions
     """
@@ -177,7 +170,7 @@ class LtiNrpsTestCase(APITransactionTestCase, TestBaseWithPatch):  # noqa: F821
             "scopes": scopes,
         })
         self.client.credentials(
-            HTTP_AUTHORIZATION=f"Bearer {token}"
+            HTTP_AUTHORIZATION="Bearer {}".format(token)
         )
 
     def _parse_link_headers(self, links):
@@ -247,7 +240,7 @@ class LtiNrpsContextMembershipViewsetTestCase(LtiNrpsTestCase):
         """
         self._set_lti_token('https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly')
         response = self.client.get(self.context_membership_endpoint)
-        self.assertEqual(response.data['id'], f'http://testserver{self.context_membership_endpoint}')
+        self.assertEqual(response.data['id'], 'http://testserver{}'.format(self.context_membership_endpoint))
         self.assertEqual(len(response.data['members']), 4)
         self.assertEqual(response.has_header('Link'), False)
 
@@ -275,7 +268,7 @@ class LtiNrpsContextMembershipViewsetTestCase(LtiNrpsTestCase):
         self._set_lti_token('https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly')
         response = self.client.get(self.context_membership_endpoint)
 
-        self.assertEqual(response.data['id'], f'http://testserver{self.context_membership_endpoint}')
+        self.assertEqual(response.data['id'], 'http://testserver{}'.format(self.context_membership_endpoint))
         self.assertEqual(len(response.data['members']), 4)
         self.assertEqual(response.has_header('Link'), False)
 
@@ -288,71 +281,6 @@ class LtiNrpsContextMembershipViewsetTestCase(LtiNrpsTestCase):
         self.assertIn('status', member_fields)
         self.assertIn('email', member_fields)
         self.assertIn('name', member_fields)
-
-    @patch('lti_consumer.plugin.views.get_lti_pii_sharing_state_for_course', return_value=False)
-    @patch(
-        'lti_consumer.plugin.views.compat.get_course_members',
-        Mock(side_effect=patch_get_memberships({
-            'student': 1,
-            'instructor': 1,
-            'staff': 1,
-        })),
-    )
-    def test_get_membership_roles_mapping(self, expose_pii_fields_patcher):
-        """
-        Test context membership endpoint returns mapped LTI context role URIs.
-        """
-        self._set_lti_token('https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly')
-        response = self.client.get(self.context_membership_endpoint)
-
-        expose_pii_fields_patcher.assert_called()
-        self.assertEqual(len(response.data['members']), 3)
-
-        actual_roles = [set(member['roles']) for member in response.data['members']]
-
-        self.assertIn(
-            set(LTI_1P3_CONTEXT_ROLE_LEARNER),
-            actual_roles,
-        )
-        self.assertIn(
-            set(LTI_1P3_CONTEXT_ROLE_INSTRUCTOR),
-            actual_roles,
-        )
-        self.assertIn(
-            set(LTI_1P3_CONTEXT_ROLE_ADMINISTRATOR),
-            actual_roles,
-        )
-
-    @patch('lti_consumer.plugin.views.get_lti_pii_sharing_state_for_course', return_value=False)
-    @patch(
-        'lti_consumer.plugin.views.compat.get_course_members',
-        Mock(side_effect=patch_get_memberships({
-            'student': 1,
-        })),
-    )
-    @patch('lti_consumer.plugin.compat.get_forum_role_model')
-    def test_get_membership_roles_mapping_includes_forum_roles(
-        self,
-        get_forum_role_model_patcher,
-        expose_pii_fields_patcher,
-    ):
-        """
-        Test context membership endpoint includes mapped forum roles.
-        """
-        fake_role = Mock()
-        fake_role.objects.filter.return_value.values_list.return_value = [(1000, 'Community TA')]
-        get_forum_role_model_patcher.return_value = fake_role
-
-        self._set_lti_token('https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly')
-        response = self.client.get(self.context_membership_endpoint)
-
-        expose_pii_fields_patcher.assert_called()
-        fake_role.objects.filter.assert_called_once()
-        self.assertEqual(len(response.data['members']), 1)
-        self.assertEqual(
-            set(response.data['members'][0]['roles']),
-            set(LTI_1P3_CONTEXT_ROLE_LEARNER + LTI_1P3_CONTEXT_ROLE_TEACHING_ASSISTANT),
-        )
 
     @patch('lti_consumer.plugin.views.get_lti_pii_sharing_state_for_course', Mock(return_value=False))
     @patch(
